@@ -1,5 +1,5 @@
 (() => {
-  const CLIENT_VERSION = '1.2.3';
+  const CLIENT_VERSION = '1.2.4';
   const isElectron = Boolean(window.electronAPI && window.electronAPI.isElectron);
   const isAndroidApk = location.protocol === 'file:' || Boolean(window.AndroidBridge);
   const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent) ||

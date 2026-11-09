@@ -1,15 +1,7 @@
 const { app, BrowserWindow, ipcMain, screen, shell, globalShortcut, Notification, nativeImage } = require('electron');
-const { execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { startServer, closeServer } = require('./server');
-
-const WINDOWS_AUMID = 'com.todoom.app';
-if (process.platform === 'win32') {
-  try {
-    app.setAppUserModelId(WINDOWS_AUMID);
-  } catch (_) {}
-}
 
 let mainWindow = null;
 let isTucked = false;
@@ -78,22 +70,6 @@ function createWindow(port) {
 
   mainWindow.on('move', captureSavedBounds);
   mainWindow.on('resize', captureSavedBounds);
-}
-
-function registerWindowsToastAppId() {
-  if (process.platform !== 'win32') return;
-  try {
-    const iconCandidate = fs.existsSync(path.join(__dirname, 'ToDoom.ico'))
-      ? path.join(__dirname, 'ToDoom.ico')
-      : path.join(__dirname, 'public', 'icon-192.png');
-    const regKey = `HKCU\\Software\\Classes\\AppUserModelId\\${WINDOWS_AUMID}`;
-    const opts = { windowsHide: true };
-    execFile('reg.exe', ['add', regKey, '/v', 'DisplayName', '/t', 'REG_SZ', '/d', 'To Doom', '/f'], opts, () => {});
-    execFile('reg.exe', ['add', regKey, '/v', 'ShowInSettings', '/t', 'REG_DWORD', '/d', '1', '/f'], opts, () => {});
-    if (fs.existsSync(iconCandidate)) {
-      execFile('reg.exe', ['add', regKey, '/v', 'IconUri', '/t', 'REG_SZ', '/d', iconCandidate, '/f'], opts, () => {});
-    }
-  } catch (_) {}
 }
 
 function getNotificationIcon() {
@@ -249,7 +225,6 @@ process.on('todoom-agent-notify', (payload) => {
 });
 
 app.whenReady().then(async () => {
-  registerWindowsToastAppId();
   const { port } = await startServer(3456);
   serverPort = port;
   createWindow(port);
