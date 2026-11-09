@@ -9,11 +9,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   toggleAlwaysOnTop: () => ipcRenderer.invoke('window-toggle-aot'),
   getWindowState: () => ipcRenderer.invoke('window-get-state'),
   openExternal: (url) => ipcRenderer.send('open-external', url),
+  notifyAgentTask: (payload) => ipcRenderer.send('agent-task-notify', payload),
   onTuckChanged: (callback) => {
     ipcRenderer.on('tuck-changed', (_event, isTucked) => callback(isTucked));
   },
   onAotChanged: (callback) => {
     ipcRenderer.on('aot-changed', (_event, isAot) => callback(isAot));
+  },
+  onAgentNotifyPulse: (callback) => {
+    ipcRenderer.on('agent-notify-pulse', () => callback());
   }
 });
 

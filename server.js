@@ -8,7 +8,7 @@ const zlib = require('zlib');
 const { WebSocketServer, WebSocket } = require('ws');
 const QRCode = require('qrcode');
 
-const APP_VERSION = '1.2.2';
+const APP_VERSION = '1.2.3';
 const SEED_TIMESTAMP = 1700000000000;
 
 // Share data directory between D:\To Doom and project folder if available
@@ -33,7 +33,8 @@ function getInitialState() {
     settings: {
       githubRepo: 'Archyange1/To-Doom',
       githubBranch: 'main',
-      lastUpdateCheck: null
+      lastUpdateCheck: null,
+      pcNotifications: true
     },
     projects: [
       {
@@ -160,6 +161,9 @@ function normalizeState(st) {
   }
   if (!st.settings.githubBranch) {
     st.settings.githubBranch = 'main';
+  }
+  if (typeof st.settings.pcNotifications !== 'boolean') {
+    st.settings.pcNotifications = true;
   }
   if (!st.deletedProjects || typeof st.deletedProjects !== 'object' || Array.isArray(st.deletedProjects)) {
     st.deletedProjects = {};
@@ -462,6 +466,9 @@ function applyAction(action, meta = {}) {
       if (typeof payload.githubBranch === 'string' && payload.githubBranch.trim()) {
         state.settings.githubBranch = payload.githubBranch.trim();
       }
+      if (typeof payload.pcNotifications === 'boolean') {
+        state.settings.pcNotifications = payload.pcNotifications;
+      }
       saveState(true);
       return { ok: true, settings: state.settings, state };
     }
@@ -586,10 +593,15 @@ function applyAction(action, meta = {}) {
       };
       state.tasks.push(task);
       saveState(false);
+      const createdProj = state.projects.find(p => p.id === projectId);
       broadcastState({
         source,
         actor: assignee,
-        event: { type: 'task_created', task }
+        event: {
+          type: 'task_created',
+          task,
+          projectName: createdProj ? createdProj.name : ''
+        }
       });
       return { ok: true, task, state };
     }
@@ -633,12 +645,14 @@ function applyAction(action, meta = {}) {
       task.updatedAt = Date.now();
 
       saveState(false);
+      const updatedProj = state.projects.find(p => p.id === task.projectId);
       broadcastState({
         source,
         actor: payload.actor || task.assignee,
         event: {
           type: 'task_updated',
           task,
+          projectName: updatedProj ? updatedProj.name : '',
           prevColumn,
           prevProgress
         }
@@ -1119,7 +1133,43 @@ function broadcast(msgObj, excludeWs = null) {
   }
 }
 
+function maybeNotifyPcForMcpEvent(extra) {
+  if (!extra || extra.source !== 'mcp' || !extra.event || !extra.event.task) return;
+  if (state.settings && state.settings.pcNotifications === false) return;
+  const ev = extra.event;
+  const task = ev.task;
+  if (!task || task.deleted) return;
+
+  const proj = (state.projects || []).find(p => p.id === task.projectId);
+  const projectName = ev.projectName || (proj && proj.name) || 'To Doom';
+
+  let actionKind = null;
+  if (ev.type === 'task_created') {
+    actionKind = (Number(task.column) === 2 || Number(task.progress) >= 100) ? 'created_done' : 'created';
+  } else if (ev.type === 'task_updated') {
+    const wasDone = Number(ev.prevColumn) === 2 || Number(ev.prevProgress) >= 100;
+    const isNowDone = Number(task.column) === 2 || Number(task.progress) >= 100;
+    if (!wasDone && isNowDone) {
+      actionKind = 'completed';
+    }
+  }
+  if (!actionKind) return;
+
+  try {
+    process.emit('todoom-agent-notify', {
+      eventKey: `${actionKind}:${task.id}:${task.updatedAt || Date.now()}`,
+      actionKind,
+      taskId: task.id,
+      title: task.title,
+      assignee: task.assignee || extra.actor || 'ШІ-агент',
+      epic: task.epic || '',
+      projectName
+    });
+  } catch (_) {}
+}
+
 function broadcastState(extra = {}) {
+  maybeNotifyPcForMcpEvent(extra);
   broadcast({
     type: 'STATE_UPDATE',
     state,

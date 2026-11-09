@@ -1,5 +1,5 @@
 (() => {
-  const CLIENT_VERSION = '1.2.2';
+  const CLIENT_VERSION = '1.2.3';
   const isElectron = Boolean(window.electronAPI && window.electronAPI.isElectron);
   const isAndroidApk = location.protocol === 'file:' || Boolean(window.AndroidBridge);
   const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent) ||
@@ -8,7 +8,9 @@
     (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
   const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0 || isAndroidApk;
 
-  if (!isElectron) {
+  if (isElectron) {
+    document.body.classList.add('is-electron');
+  } else {
     document.body.classList.add('is-web');
   }
   if (isTouch) {
@@ -248,17 +250,38 @@
     });
 
     const chkAot = document.getElementById('chk-always-on-top');
+    const chkPcNotif = document.getElementById('chk-pc-notifications');
     window.electronAPI.getWindowState().then((st) => {
-      if (st && chkAot) chkAot.checked = Boolean(st.isAlwaysOnTop);
+      if (!st) return;
+      if (chkAot) chkAot.checked = Boolean(st.isAlwaysOnTop);
+      if (st.isTucked) {
+        appShell.classList.add('hidden');
+        tuckTab.classList.remove('hidden');
+      }
     });
     if (chkAot) {
       chkAot.addEventListener('change', () => {
         window.electronAPI.toggleAlwaysOnTop();
       });
     }
+    if (chkPcNotif) {
+      chkPcNotif.checked = !(boardState.settings && boardState.settings.pcNotifications === false);
+      chkPcNotif.addEventListener('change', () => {
+        sendAction('UPDATE_SETTINGS', { pcNotifications: chkPcNotif.checked });
+        showToast(chkPcNotif.checked ? 'Сповіщення ПК від ШІ-агента увімкнено' : 'Сповіщення ПК від ШІ-агента вимкнено');
+      });
+    }
     window.electronAPI.onAotChanged((isAot) => {
       if (chkAot) chkAot.checked = Boolean(isAot);
     });
+    if (window.electronAPI.onAgentNotifyPulse) {
+      let pulseTimer = null;
+      window.electronAPI.onAgentNotifyPulse(() => {
+        tuckTab.classList.add('pulse-notify');
+        if (pulseTimer) clearTimeout(pulseTimer);
+        pulseTimer = setTimeout(() => tuckTab.classList.remove('pulse-notify'), 2600);
+      });
+    }
   } else {
     btnTuck.addEventListener('click', () => toggleWebTuck(false));
     tuckTab.addEventListener('click', () => toggleWebTuck(true));
@@ -554,7 +577,40 @@
           }
           if (msg.source === 'mcp' && msg.event && msg.event.task) {
             const t = msg.event.task;
-            showToast(`ШІ-агент оновив #${t.id} «${t.title}» → ${COLUMN_NAMES[t.column]} (${t.progress}%)`);
+            if (msg.event.type === 'task_created') {
+              showToast(`ШІ-агент додав #${t.id} «${t.title}»`);
+            } else {
+              showToast(`ШІ-агент оновив #${t.id} «${t.title}» → ${COLUMN_NAMES[t.column]} (${t.progress}%)`);
+            }
+            if (
+              isElectron &&
+              window.electronAPI &&
+              window.electronAPI.notifyAgentTask &&
+              (!boardState.settings || boardState.settings.pcNotifications !== false) &&
+              !t.deleted
+            ) {
+              const proj = (boardState.projects || []).find(p => p.id === t.projectId);
+              const projectName = msg.event.projectName || (proj && proj.name) || 'To Doom';
+              let actionKind = null;
+              if (msg.event.type === 'task_created') {
+                actionKind = (Number(t.column) === 2 || Number(t.progress) >= 100) ? 'created_done' : 'created';
+              } else if (msg.event.type === 'task_updated') {
+                const wasDone = Number(msg.event.prevColumn) === 2 || Number(msg.event.prevProgress) >= 100;
+                const isNowDone = Number(t.column) === 2 || Number(t.progress) >= 100;
+                if (!wasDone && isNowDone) actionKind = 'completed';
+              }
+              if (actionKind) {
+                window.electronAPI.notifyAgentTask({
+                  eventKey: `${actionKind}:${t.id}:${t.updatedAt || ''}`,
+                  actionKind,
+                  taskId: t.id,
+                  title: t.title,
+                  assignee: t.assignee || msg.actor || 'ШІ-агент',
+                  epic: t.epic || '',
+                  projectName
+                });
+              }
+            }
           }
         } else if (msg.type === 'PEERS_UPDATE') {
           peers = msg.peers || [];
@@ -1418,6 +1474,10 @@
     const branch = (boardState.settings && boardState.settings.githubBranch) || localStorage.getItem('todoom_github_branch') || 'main';
     inputGithubRepo.value = repo;
     inputGithubBranch.value = branch;
+    const chkPcNotif = document.getElementById('chk-pc-notifications');
+    if (chkPcNotif) {
+      chkPcNotif.checked = !(boardState.settings && boardState.settings.pcNotifications === false);
+    }
     renderSettingsProjectAiList();
     loadNetworkInfo();
     openModal('modal-settings');
