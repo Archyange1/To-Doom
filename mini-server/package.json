@@ -1,14 +1,32 @@
 {
-  "name": "to-doom-server",
-  "version": "1.2.1",
-  "description": "To Doom — Автономний сервер синхронізації (Wi-Fi / Tailscale / iPhone / Планшет / ПК / MCP)",
-  "main": "server.js",
+  "name": "to-doom",
+  "version": "1.2.2",
+  "description": "To Doom — Дошка задач для Windows, планшета, iPhone та ШІ-агентів (MCP) із синхронізацією по Wi-Fi/Tailscale та оновленням через GitHub",
+  "main": "main.js",
   "scripts": {
-    "start": "node server.js",
-    "mcp": "node mcp-server.js"
+    "start": "electron .",
+    "web": "node server.js",
+    "mcp": "node mcp-server.js",
+    "build:apk": "node build-apk.js",
+    "build:win": "node build-windows.js"
   },
+  "keywords": [
+    "kanban",
+    "tasks",
+    "todo",
+    "mcp",
+    "wifi-sync",
+    "tailscale",
+    "electron"
+  ],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs",
   "dependencies": {
     "qrcode": "^1.5.4",
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^35.0.0"
   }
 }

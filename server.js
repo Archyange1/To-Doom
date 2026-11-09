@@ -4,10 +4,11 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const dgram = require('dgram');
+const zlib = require('zlib');
 const { WebSocketServer, WebSocket } = require('ws');
 const QRCode = require('qrcode');
 
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.2.2';
 const SEED_TIMESTAMP = 1700000000000;
 
 // Share data directory between D:\To Doom and project folder if available
@@ -698,30 +699,188 @@ function cleanGithubRepo(input) {
   return s;
 }
 
-function httpsGetText(url) {
+const PNG_HEADER = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) {
+      c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    }
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(buf) {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) {
+    c = CRC32_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  }
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function makePngChunk(type, data) {
+  const lenBuf = Buffer.alloc(4);
+  lenBuf.writeUInt32BE(data.length, 0);
+  const typeBuf = Buffer.from(type, 'ascii');
+  const crcBuf = Buffer.alloc(4);
+  crcBuf.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0);
+  return Buffer.concat([lenBuf, typeBuf, data, crcBuf]);
+}
+
+function pointInRoundedRectNorm(x, y, rx, ry, rw, rh, rad) {
+  if (x < rx || x > rx + rw || y < ry || y > ry + rh) return false;
+  const cx = Math.max(rx + rad, Math.min(x, rx + rw - rad));
+  const cy = Math.max(ry + rad, Math.min(y, ry + rh - rad));
+  const dx = x - cx;
+  const dy = y - cy;
+  return dx * dx + dy * dy <= rad * rad;
+}
+
+function generateSquareAppIconPng(size) {
+  const raw = Buffer.alloc(size * (1 + size * 4));
+  for (let y = 0; y < size; y++) {
+    const rowStart = y * (1 + size * 4);
+    raw[rowStart] = 0;
+    const nyCenter = (y + 0.5) / size;
+    const barT = Math.max(0, Math.min(1, (nyCenter - 0.22) / 0.55));
+    const barR = Math.round(50 - barT * 20);
+    const barG = Math.round(212 - barT * 26);
+    const barB = Math.round(108 - barT * 24);
+
+    for (let x = 0; x < size; x++) {
+      const idx = rowStart + 1 + x * 4;
+      const nxCenter = (x + 0.5) / size;
+      const dist = Math.min(1, Math.hypot(nxCenter - 0.5, nyCenter - 0.42) * 1.4);
+      const bgR = Math.round(18 - dist * 7);
+      const bgG = Math.round(41 - dist * 16);
+      const bgB = Math.round(28 - dist * 10);
+
+      let hits = 0;
+      for (let sy = 0; sy < 4; sy++) {
+        const py = (y + (sy + 0.5) / 4) / size;
+        for (let sx = 0; sx < 4; sx++) {
+          const px = (x + (sx + 0.5) / 4) / size;
+          const inBar =
+            pointInRoundedRectNorm(px, py, 0.22, 0.40, 0.13, 0.37, 0.048) ||
+            pointInRoundedRectNorm(px, py, 0.435, 0.22, 0.13, 0.55, 0.048) ||
+            pointInRoundedRectNorm(px, py, 0.65, 0.51, 0.13, 0.26, 0.048);
+          if (inBar) hits++;
+        }
+      }
+
+      if (hits === 0) {
+        raw[idx] = bgR;
+        raw[idx + 1] = bgG;
+        raw[idx + 2] = bgB;
+        raw[idx + 3] = 255;
+      } else if (hits === 16) {
+        raw[idx] = barR;
+        raw[idx + 1] = barG;
+        raw[idx + 2] = barB;
+        raw[idx + 3] = 255;
+      } else {
+        const cov = hits / 16;
+        raw[idx] = Math.round(bgR * (1 - cov) + barR * cov);
+        raw[idx + 1] = Math.round(bgG * (1 - cov) + barG * cov);
+        raw[idx + 2] = Math.round(bgB * (1 - cov) + barB * cov);
+        raw[idx + 3] = 255;
+      }
+    }
+  }
+
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  const idat = zlib.deflateSync(raw);
+  return Buffer.concat([
+    PNG_HEADER,
+    makePngChunk('IHDR', ihdr),
+    makePngChunk('IDAT', idat),
+    makePngChunk('IEND', Buffer.alloc(0))
+  ]);
+}
+
+const PWA_ICON_SPECS = [
+  { file: 'apple-touch-icon.png', size: 180 },
+  { file: 'icon-192.png', size: 192 },
+  { file: 'icon-512.png', size: 512 }
+];
+
+function isValidPngForSize(filePath, expectedSize) {
+  try {
+    const buf = fs.readFileSync(filePath);
+    if (buf.length < 32) return false;
+    if (!buf.subarray(0, 8).equals(PNG_HEADER)) return false;
+    if (buf.toString('ascii', 12, 16) !== 'IHDR') return false;
+    return buf.readUInt32BE(16) === expectedSize && buf.readUInt32BE(20) === expectedSize;
+  } catch (_) {
+    return false;
+  }
+}
+
+function ensurePwaIcons(force = false) {
+  try {
+    fs.mkdirSync(PUBLIC_DIR, { recursive: true });
+    for (const spec of PWA_ICON_SPECS) {
+      const targetPath = path.join(PUBLIC_DIR, spec.file);
+      if (force || !isValidPngForSize(targetPath, spec.size)) {
+        fs.writeFileSync(targetPath, generateSquareAppIconPng(spec.size));
+      }
+    }
+  } catch (_) {}
+}
+
+function httpsGetBuffer(url) {
   return new Promise((resolve, reject) => {
     const req = https.get(url, {
       headers: {
-        'User-Agent': 'To-Doom-Updater/1.2',
+        'User-Agent': 'To-Doom-Updater/1.2.2',
         'Cache-Control': 'no-cache'
       },
-      timeout: 8000
+      timeout: 10000
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        httpsGetText(res.headers.location).then(resolve).catch(reject);
+        httpsGetBuffer(res.headers.location).then(resolve).catch(reject);
         return;
       }
       if (res.statusCode !== 200) {
         reject(new Error(`HTTP ${res.statusCode} для ${url}`));
         return;
       }
-      let data = '';
-      res.on('data', chunk => { data += chunk; });
-      res.on('end', () => resolve(data));
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
     });
     req.on('error', reject);
     req.on('timeout', () => { req.destroy(); reject(new Error('Таймаут запиту до GitHub')); });
   });
+}
+
+async function httpsGetText(url) {
+  const buf = await httpsGetBuffer(url);
+  return buf.toString('utf8');
+}
+
+async function resolveGithubCommit(repo, branch) {
+  try {
+    const commitJson = await httpsGetText(`https://api.github.com/repos/${repo}/commits/${branch}`);
+    const commitObj = JSON.parse(commitJson);
+    if (commitObj && commitObj.sha) {
+      return {
+        shaFull: commitObj.sha,
+        latestCommit: {
+          sha: commitObj.sha.slice(0, 7),
+          message: ((commitObj.commit && commitObj.commit.message) || '').split('\n')[0],
+          date: commitObj.commit && commitObj.commit.committer && commitObj.commit.committer.date
+        }
+      };
+    }
+  } catch (_) {}
+  return { shaFull: null, latestCommit: null };
 }
 
 async function checkGithubUpdate(repoInput, branchInput) {
@@ -737,23 +896,12 @@ async function checkGithubUpdate(repoInput, branchInput) {
     if (localPkg.version) localVersion = localPkg.version;
   } catch (_) {}
 
-  const rawPkgUrl = `https://raw.githubusercontent.com/${repo}/${branch}/package.json?t=${Date.now()}`;
+  const { shaFull, latestCommit } = await resolveGithubCommit(repo, branch);
+  const rawRef = shaFull || branch;
+  const rawPkgUrl = `https://raw.githubusercontent.com/${repo}/${rawRef}/package.json?t=${Date.now()}`;
   const rawPkgText = await httpsGetText(rawPkgUrl);
   const remotePkg = JSON.parse(rawPkgText);
   const remoteVersion = remotePkg.version || '1.0.0';
-
-  let latestCommit = null;
-  try {
-    const commitJson = await httpsGetText(`https://api.github.com/repos/${repo}/commits/${branch}`);
-    const commitObj = JSON.parse(commitJson);
-    if (commitObj && commitObj.sha) {
-      latestCommit = {
-        sha: commitObj.sha.slice(0, 7),
-        message: (commitObj.commit && commitObj.commit.message || '').split('\n')[0],
-        date: commitObj.commit && commitObj.commit.committer && commitObj.commit.committer.date
-      };
-    }
-  } catch (_) {}
 
   let apkReleaseUrl = null;
   try {
@@ -784,6 +932,9 @@ async function applyGithubUpdate(repoInput, branchInput) {
     return { ok: false, error: 'Вкажіть ваш GitHub репозиторій у форматі власник/репозиторій' };
   }
 
+  const { shaFull } = await resolveGithubCommit(repo, branch);
+  const rawRef = shaFull || branch;
+
   const filesToUpdate = [
     'package.json',
     'server.js',
@@ -794,18 +945,21 @@ async function applyGithubUpdate(repoInput, branchInput) {
     'public/styles.css',
     'public/app.js',
     'public/manifest.json',
-    'public/icon.svg'
+    'public/icon.svg',
+    'public/apple-touch-icon.png',
+    'public/icon-192.png',
+    'public/icon-512.png'
   ];
 
   const downloaded = new Map();
   for (const relPath of filesToUpdate) {
-    const url = `https://raw.githubusercontent.com/${repo}/${branch}/${relPath}?t=${Date.now()}`;
+    const url = `https://raw.githubusercontent.com/${repo}/${rawRef}/${relPath}?t=${Date.now()}`;
     try {
-      const content = await httpsGetText(url);
-      downloaded.set(relPath, content);
+      const contentBuf = await httpsGetBuffer(url);
+      downloaded.set(relPath, contentBuf);
     } catch (err) {
-      // Only require core files (package.json, public/index.html, public/app.js, public/styles.css)
-      if (relPath === 'package.json' || relPath.startsWith('public/')) {
+      // Require text core files; allow optional icon files if updating from older commits
+      if (relPath === 'package.json' || (relPath.startsWith('public/') && !relPath.endsWith('.png'))) {
         throw new Error(`Не вдалося завантажити ${relPath}: ${err.message}`);
       }
     }
@@ -821,16 +975,18 @@ async function applyGithubUpdate(repoInput, branchInput) {
   }
 
   for (const baseDir of targetDirs) {
-    for (const [relPath, content] of downloaded.entries()) {
+    for (const [relPath, contentBuf] of downloaded.entries()) {
       const fullPath = path.join(baseDir, ...relPath.split('/'));
       fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-      fs.writeFileSync(fullPath, content, 'utf8');
+      fs.writeFileSync(fullPath, contentBuf);
     }
   }
 
+  ensurePwaIcons(false);
+
   let newVersion = APP_VERSION;
   try {
-    const pkg = JSON.parse(downloaded.get('package.json'));
+    const pkg = JSON.parse(downloaded.get('package.json').toString('utf8'));
     if (pkg.version) newVersion = pkg.version;
   } catch (_) {}
 
@@ -1254,12 +1410,22 @@ function checkExistingServerOnPort(port) {
 
 function startServer(port = DEFAULT_PORT) {
   return new Promise(async (resolve) => {
+    ensurePwaIcons(false);
     const alreadyRunning = await checkExistingServerOnPort(port);
     if (alreadyRunning) {
       activeServerPort = port;
       resolve({ server: null, port, reused: true });
       return;
     }
+
+    const APPLE_ICON_ALIASES = new Set([
+      '/apple-touch-icon.png',
+      '/apple-touch-icon-precomposed.png',
+      '/apple-touch-icon-180x180.png',
+      '/apple-touch-icon-180x180-precomposed.png',
+      '/apple-touch-icon-152x152.png',
+      '/apple-touch-icon-120x120.png'
+    ]);
 
     const server = http.createServer(async (req, res) => {
       if (req.url.startsWith('/api/')) {
@@ -1269,6 +1435,12 @@ function startServer(port = DEFAULT_PORT) {
 
       const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
       let reqPath = urlObj.pathname === '/' ? '/index.html' : urlObj.pathname;
+      const lowerReqPath = reqPath.toLowerCase();
+      if (APPLE_ICON_ALIASES.has(lowerReqPath)) {
+        reqPath = '/apple-touch-icon.png';
+      } else if (lowerReqPath === '/favicon.ico') {
+        reqPath = '/icon-192.png';
+      }
       const safePath = path.normalize(reqPath).replace(/^(\.\.[/\\])+/, '');
       const filePath = path.join(PUBLIC_DIR, safePath);
 
@@ -1477,4 +1649,4 @@ function closeServer() {
   try { if (activeHttpServer) activeHttpServer.close(); } catch (_) {}
 }
 
-module.exports = { startServer, applyAction, getLocalIPs, closeServer };
+module.exports = { startServer, applyAction, getLocalIPs, closeServer, ensurePwaIcons };

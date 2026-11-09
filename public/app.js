@@ -1,6 +1,11 @@
 (() => {
+  const CLIENT_VERSION = '1.2.2';
   const isElectron = Boolean(window.electronAPI && window.electronAPI.isElectron);
   const isAndroidApk = location.protocol === 'file:' || Boolean(window.AndroidBridge);
+  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isStandalone = window.navigator.standalone === true ||
+    (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
   const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0 || isAndroidApk;
 
   if (!isElectron) {
@@ -8,6 +13,17 @@
   }
   if (isTouch) {
     document.body.classList.add('is-touch');
+  }
+  if (isIos) {
+    document.body.classList.add('is-ios');
+    document.addEventListener('focusout', () => {
+      setTimeout(() => {
+        if (window.scrollY !== 0) window.scrollTo(0, 0);
+      }, 60);
+    });
+  }
+  if (isStandalone) {
+    document.body.classList.add('is-standalone');
   }
 
   const COLUMN_NAMES = ['До виконання', 'В роботі', 'Виконано'];
@@ -45,7 +61,7 @@
       }
     } catch (_) {}
     return {
-      version: '1.2.1',
+      version: CLIENT_VERSION,
       nextTaskId: 17,
       activeProjectId: 'proj-1',
       deletedProjects: {},
@@ -496,7 +512,7 @@
       const helloMsg = {
         type: 'HELLO',
         name: currentUserName,
-        deviceType: isAndroidApk ? 'tablet' : 'desktop'
+        deviceType: isAndroidApk ? 'tablet' : (isIos ? 'iphone' : (isElectron ? 'desktop' : 'web'))
       };
       if (hadDirty) {
         helloMsg.offlineState = boardState;
@@ -1453,9 +1469,9 @@
           ok: true,
           repo,
           branch,
-          localVersion: boardState.version || '1.2.1',
-          remoteVersion: remotePkg.version || '1.2.1',
-          hasUpdate: remotePkg.version !== (boardState.version || '1.2.1')
+          localVersion: boardState.version || CLIENT_VERSION,
+          remoteVersion: remotePkg.version || CLIENT_VERSION,
+          hasUpdate: remotePkg.version !== (boardState.version || CLIENT_VERSION)
         };
       }
 
