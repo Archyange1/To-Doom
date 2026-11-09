@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="To Doom" />
+  <meta name="theme-color" content="#0d0f12" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <title>To Doom</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Вузький зелений язичок біля краю екрана (коли вікно сховане на Windows) -->
+  <div id="tuck-tab" class="tuck-tab hidden" title="Натисніть, щоб повернути To Doom (Alt+S)">
+    <div class="tuck-pill"></div>
+  </div>
+
+  <!-- Головний контейнер вікна -->
+  <div id="app-shell" class="app-shell">
+    <!-- Верхня панель заголовка (Titlebar) -->
+    <header class="titlebar" id="titlebar">
+      <div class="titlebar-left">
+        <div class="app-logo">
+          <svg viewBox="0 0 32 32" width="18" height="18" aria-hidden="true">
+            <rect width="32" height="32" rx="7" fill="#0d1f15" stroke="#1e462f" stroke-width="1.5"/>
+            <rect x="7" y="13" width="4" height="12" rx="1.5" fill="#22c55e"/>
+            <rect x="14" y="7" width="4" height="18" rx="1.5" fill="#22c55e"/>
+            <rect x="21" y="16" width="4" height="9" rx="1.5" fill="#22c55e"/>
+          </svg>
+        </div>
+        <span class="app-title">To Doom</span>
+        <span id="app-version-badge" class="app-version">v1.2.0</span>
+      </div>
+
+      <div class="titlebar-right">
+        <!-- Швидка кнопка оновлення з GitHub -->
+        <button id="btn-update-header" class="icon-btn" title="Оновлення через GitHub">
+          <svg viewBox="0 0 18 18" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M14.5 9a5.5 5.5 0 1 1-1.3-3.5" stroke-linecap="round"/>
+            <polyline points="14.5 3 14.5 6 11.5 6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+
+        <!-- Перемикач компактного режиму (1 колонка / список) -->
+        <button id="btn-view-list" class="icon-btn" title="Компактний вигляд (усі колонки списком)">
+          <svg viewBox="0 0 18 18" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6">
+            <rect x="3" y="3" width="12" height="3.2" rx="1" />
+            <rect x="3" y="7.4" width="12" height="3.2" rx="1" />
+            <rect x="3" y="11.8" width="12" height="3.2" rx="1" />
+          </svg>
+        </button>
+
+        <!-- Перемикач дошки (3 колонки Kanban) -->
+        <button id="btn-view-board" class="icon-btn active" title="Дошка (колонки)">
+          <svg viewBox="0 0 18 18" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6">
+            <rect x="2.2" y="3" width="3.6" height="12" rx="0.8" />
+            <rect x="7.2" y="3" width="3.6" height="12" rx="0.8" />
+            <rect x="12.2" y="3" width="3.6" height="12" rx="0.8" />
+          </svg>
+        </button>
+
+        <!-- Сховати за правий край екрана -->
+        <button id="btn-tuck" class="icon-btn desktop-only" title="Сховати за край екрана (Alt+S)">
+          <svg viewBox="0 0 18 18" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6">
+            <rect x="2.5" y="3" width="13" height="12" rx="2" />
+            <line x1="11.5" y1="3" x2="11.5" y2="15" />
+            <path d="M6.5 7l2.5 2-2.5 2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+
+        <!-- Згорнути вікно -->
+        <button id="btn-minimize" class="icon-btn desktop-only" title="Згорнути">
+          <svg viewBox="0 0 18 18" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6">
+            <line x1="4" y1="9" x2="14" y2="9" stroke-linecap="round"/>
+          </svg>
+        </button>
+
+        <!-- Закрити вікно -->
+        <button id="btn-close" class="icon-btn close-btn desktop-only" title="Закрити">
+          <svg viewBox="0 0 18 18" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6">
+            <line x1="4.5" y1="4.5" x2="13.5" y2="13.5" stroke-linecap="round"/>
+            <line x1="13.5" y1="4.5" x2="4.5" y2="13.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Рядок вкладок проєктів та незалежного перемикача ШІ для проєкту -->
+    <div class="projects-bar">
+      <div id="project-tabs" class="project-tabs"></div>
+      <div class="projects-actions">
+        <button id="btn-toggle-project-ai" class="ai-project-pill active" title="Дозволити або заборонити ШІ-агенту (MCP) керувати цим проєктом">
+          <span class="ai-icon">🤖</span>
+          <span id="ai-project-status-text">ШІ: Увімк.</span>
+        </button>
+        <button id="btn-settings" class="circle-btn" title="Налаштування, GitHub-оновлення та MCP для проєктів">
+          <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7">
+            <circle cx="10" cy="10" r="2.6"/>
+            <path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button id="btn-new-project" class="circle-btn" title="Новий проєкт">
+          <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9">
+            <line x1="10" y1="4.5" x2="10" y2="15.5" stroke-linecap="round"/>
+            <line x1="4.5" y1="10" x2="15.5" y2="10" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Рядок додавання нової задачі -->
+    <form id="task-form" class="task-form" autocomplete="off">
+      <div class="input-wrap task-title-wrap">
+        <input
+          id="input-task-title"
+          type="text"
+          class="task-input"
+          placeholder="Що потрібно зробити?"
+          maxlength="160"
+        />
+        <div id="input-peer-badge" class="peer-floating-badge hidden"></div>
+      </div>
+      <div class="input-wrap task-epic-wrap">
+        <input
+          id="input-task-epic"
+          type="text"
+          class="task-input epic-input"
+          placeholder="Епік"
+          maxlength="45"
+          list="epics-datalist"
+        />
+        <datalist id="epics-datalist"></datalist>
+      </div>
+      <button type="submit" id="btn-add-task" class="btn-add">Додати</button>
+    </form>
+
+    <!-- Рядок прогресу проєкту та статусу синхронізації -->
+    <div class="status-bar">
+      <div class="progress-summary">
+        <span id="project-percent" class="project-percent">54%</span>
+        <span id="project-counts" class="project-counts">Прогрес проєкту · 1 з 5 виконано</span>
+      </div>
+
+      <div class="status-actions">
+        <button id="btn-peers-badge" class="peer-pill hidden" title="Підключені пристрої">
+          <span class="peer-dot"></span>
+          <span id="peer-count-text">1 пристрій</span>
+        </button>
+        <button id="btn-deleted" class="status-link" title="Переглянути видалені задачі">
+          Видалені <span id="deleted-count">0</span>
+        </button>
+        <button id="btn-share" class="status-link share-link" title="Синхронізація по Wi-Fi або Tailscale">
+          Поділитися
+        </button>
+      </div>
+    </div>
+
+    <!-- Мобільні вкладки колонок (сегментований перемикач для iPhone та вузьких екранів) -->
+    <div class="mobile-col-switcher" id="mobile-col-switcher">
+      <button type="button" class="mob-col-btn active" data-col="0">
+        <span class="mob-dot todo-dot"></span>
+        <span class="mob-col-label">До виконання</span>
+        <span id="mob-count-0" class="mob-count">0</span>
+      </button>
+      <button type="button" class="mob-col-btn" data-col="1">
+        <span class="mob-dot progress-dot"></span>
+        <span class="mob-col-label">В роботі</span>
+        <span id="mob-count-1" class="mob-count">0</span>
+      </button>
+      <button type="button" class="mob-col-btn" data-col="2">
+        <span class="mob-dot done-dot"></span>
+        <span class="mob-col-label">Виконано</span>
+        <span id="mob-count-2" class="mob-count">0</span>
+      </button>
+    </div>
+
+    <!-- Канбан-дошка з 3 колонками -->
+    <main id="board" class="board">
+      <section class="board-column col-todo active-mobile-col" data-column="0">
+        <div class="col-accent-bar"></div>
+        <div class="col-header">
+          <h2 class="col-title">До виконання</h2>
+          <span id="col-count-0" class="col-count">0</span>
+        </div>
+        <div id="col-list-0" class="card-list" data-column="0"></div>
+      </section>
+
+      <section class="board-column col-inprogress" data-column="1">
+        <div class="col-accent-bar"></div>
+        <div class="col-header">
+          <h2 class="col-title">В роботі</h2>
+          <span id="col-count-1" class="col-count">0</span>
+        </div>
+        <div id="col-list-1" class="card-list" data-column="1"></div>
+      </section>
+
+      <section class="board-column col-done" data-column="2">
+        <div class="col-accent-bar"></div>
+        <div class="col-header">
+          <h2 class="col-title">Виконано</h2>
+          <span id="col-count-2" class="col-count">0</span>
+        </div>
+        <div id="col-list-2" class="card-list" data-column="2"></div>
+      </section>
+    </main>
+
+    <div id="toast-container" class="toast-container"></div>
+  </div>
+
+  <!-- Модальне вікно: Wi-Fi та Tailscale Синхронізація -->
+  <div id="modal-share" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Синхронізація (Wi-Fi / Tailscale / iPhone / Планшет)</h3>
+        <button class="icon-btn modal-close" data-close="modal-share">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">
+          Відскануйте QR-код камерою <strong>iPhone</strong> або <strong>планшета</strong>, або підключіться через <strong>Tailscale</strong> з будь-якого місця.
+        </p>
+
+        <div class="qr-section">
+          <div id="qr-container" class="qr-box">Завантаження QR...</div>
+          <div class="qr-info">
+            <label class="field-label">Адреса сервера:</label>
+            <div class="copy-row">
+              <input id="sync-url-input" type="text" class="modal-input" readonly />
+              <button id="btn-copy-url" class="btn-secondary">Копіювати</button>
+            </div>
+
+            <label class="field-label" style="margin-top: 10px;">Мережевий інтерфейс (Wi-Fi / Tailscale):</label>
+            <select id="select-network-ip" class="modal-select"></select>
+
+            <div class="iphone-tip">
+              <strong>На iPhone:</strong> відкрийте посилання в Safari → натисніть <em>«Поділитися»</em> → <em>«На початковий екран»</em> для повноекранного режиму.
+            </div>
+          </div>
+        </div>
+
+        <hr class="modal-divider" />
+
+        <div class="peer-connect-section">
+          <label class="field-label">Адреса ПК або Міні-сервера (Wi-Fi або Tailscale IP):</label>
+          <div id="lan-discovered-list" class="lan-list"></div>
+          <div class="copy-row" style="margin-top: 6px;">
+            <input id="input-peer-ip" type="text" class="modal-input" placeholder="192.168.23.66:3456 або 100.x.x.x:3456" />
+            <button id="btn-connect-peer" class="btn-secondary">Підключити</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Модальне вікно: Налаштування, Оновлення з GitHub та Керування ШІ по проєктах -->
+  <div id="modal-settings" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Налаштування, GitHub-оновлення та ШІ (MCP)</h3>
+        <button class="icon-btn modal-close" data-close="modal-settings">✕</button>
+      </div>
+      <div class="modal-body">
+        <!-- 1. Оновлення через GitHub -->
+        <div class="settings-section">
+          <div class="section-title-row">
+            <span class="section-badge">GitHub Update</span>
+            <strong>Оновлення додатку через GitHub</strong>
+          </div>
+          <p class="hint-text" style="margin-bottom: 8px;">
+            Вкажіть ваш репозиторій GitHub (наприклад: <code>username/to-doom</code>). Усі подальші оновлення (на ПК, міні-сервері, iPhone та планшеті) встановлюються в один клік без перекомпіляції!
+          </p>
+          <div class="github-inputs-row">
+            <input id="input-github-repo" type="text" class="modal-input" placeholder="власник/репозиторій або посилання GitHub" />
+            <input id="input-github-branch" type="text" class="modal-input branch-input" placeholder="main" value="main" />
+          </div>
+          <div class="github-actions-row">
+            <button type="button" id="btn-save-github" class="btn-secondary btn-sm">Зберегти репо</button>
+            <button type="button" id="btn-check-update" class="btn-secondary btn-sm">Перевірити</button>
+            <button type="button" id="btn-apply-update" class="btn-add btn-sm">Оновити з GitHub</button>
+          </div>
+          <div id="github-update-status" class="update-status-box hidden"></div>
+        </div>
+
+        <hr class="modal-divider" />
+
+        <!-- 2. Незалежне керування ШІ-агентом (MCP) для кожного проєкту -->
+        <div class="settings-section">
+          <div class="mcp-header-row">
+            <label class="field-label" style="margin:0;">Незалежний доступ ШІ-агента до проєктів:</label>
+            <button id="btn-simulate-mcp" class="btn-accent-outline btn-sm">Тест дії ШІ</button>
+          </div>
+          <p class="hint-text" style="margin-bottom: 8px;">
+            MCP-сервер підключається в агент один раз глобально, а тут ви вмикаєте або вимикаєте дозвіл на керування для кожного проєкту окремо:
+          </p>
+          <div id="project-ai-list" class="project-ai-list"></div>
+
+          <div class="mcp-header-row" style="margin-top: 12px;">
+            <label class="field-label" style="margin:0;">Глобальний конфіг MCP (додати в агент один раз):</label>
+            <button id="btn-Copy-mcp" class="btn-secondary btn-sm">Копіювати JSON</button>
+          </div>
+          <pre id="mcp-config-preview" class="code-block"></pre>
+        </div>
+
+        <hr class="modal-divider" />
+
+        <!-- 3. Ім'я користувача та вікно Windows -->
+        <div class="form-group">
+          <label class="field-label">Ваше ім'я на картках задач (на цьому пристрої):</label>
+          <div class="copy-row">
+            <input id="input-user-name" type="text" class="modal-input" placeholder="Ви" maxlength="24" />
+            <button id="btn-save-username" class="btn-secondary">Зберегти</button>
+          </div>
+        </div>
+
+        <div class="form-group desktop-only" style="margin-top: 10px;">
+          <label class="checkbox-label">
+            <input type="checkbox" id="chk-always-on-top" />
+            <span>Тримати вікно поверх усіх інших вікон Windows (<code>Alt + S</code> — сховати за край)</span>
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Модальне вікно: Видалені задачі (Кошик) -->
+  <div id="modal-trash" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Видалені задачі</h3>
+        <button class="icon-btn modal-close" data-close="modal-trash">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="trash-list" class="trash-list"></div>
+        <div class="modal-footer-actions">
+          <button id="btn-empty-trash" class="btn-danger">Очистити кошик</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Модальне вікно: Створення / Редагування проєкту -->
+  <div id="modal-project" class="modal-backdrop hidden">
+    <div class="modal-card modal-sm">
+      <div class="modal-header">
+        <h3 id="modal-project-title">Новий проєкт</h3>
+        <button class="icon-btn modal-close" data-close="modal-project">✕</button>
+      </div>
+      <form id="form-project" class="modal-body">
+        <input type="hidden" id="edit-project-id" />
+        <label class="field-label">Назва проєкту:</label>
+        <input id="input-project-name" type="text" class="modal-input" placeholder="Наприклад: Реліз v2.0" required maxlength="40" />
+
+        <label class="field-label" style="margin-top: 12px;">Колір індикатора:</label>
+        <div id="project-color-picker" class="color-picker">
+          <button type="button" class="color-swatch selected" data-color="#22c55e" style="background:#22c55e"></button>
+          <button type="button" class="color-swatch" data-color="#f59e0b" style="background:#f59e0b"></button>
+          <button type="button" class="color-swatch" data-color="#3b82f6" style="background:#3b82f6"></button>
+          <button type="button" class="color-swatch" data-color="#a855f7" style="background:#a855f7"></button>
+          <button type="button" class="color-swatch" data-color="#ec4899" style="background:#ec4899"></button>
+          <button type="button" class="color-swatch" data-color="#14b8a6" style="background:#14b8a6"></button>
+        </div>
+
+        <label class="checkbox-label" style="margin-top: 14px;">
+          <input type="checkbox" id="chk-project-agent-enabled" checked />
+          <span>🤖 Дозволити ШІ-агенту (MCP) керувати задачами цього проєкту</span>
+        </label>
+
+        <div class="modal-footer-actions" style="margin-top: 16px;">
+          <button type="button" id="btn-delete-project" class="btn-danger hidden">Видалити проєкт</button>
+          <button type="submit" class="btn-add">Зберегти</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Модальне вікно: Редагування задачі -->
+  <div id="modal-edit-task" class="modal-backdrop hidden">
+    <div class="modal-card modal-sm">
+      <div class="modal-header">
+        <h3 id="modal-task-heading">Редагувати задачу</h3>
+        <button class="icon-btn modal-close" data-close="modal-edit-task">✕</button>
+      </div>
+      <form id="form-edit-task" class="modal-body">
+        <input type="hidden" id="edit-task-id" />
+        <label class="field-label">Назва задачі:</label>
+        <input id="edit-task-title" type="text" class="modal-input" required maxlength="160" />
+
+        <div class="two-cols" style="margin-top: 10px;">
+          <div>
+            <label class="field-label">Епік / Категорія:</label>
+            <input id="edit-task-epic" type="text" class="modal-input" maxlength="45" />
+          </div>
+          <div>
+            <label class="field-label">Виконавець:</label>
+            <input id="edit-task-assignee" type="text" class="modal-input" maxlength="24" />
+          </div>
+        </div>
+
+        <div class="two-cols" style="margin-top: 10px;">
+          <div>
+            <label class="field-label">Колонка:</label>
+            <select id="edit-task-column" class="modal-select">
+              <option value="0">До виконання</option>
+              <option value="1">В роботі</option>
+              <option value="2">Виконано</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label">Прогрес (<span id="edit-task-progress-val">0%</span>):</label>
+            <input id="edit-task-progress" type="range" min="0" max="100" step="5" class="modal-range" />
+          </div>
+        </div>
+
+        <div class="modal-footer-actions" style="margin-top: 16px;">
+          <button type="button" id="btn-delete-task-modal" class="btn-danger">У кошик</button>
+          <button type="submit" class="btn-add">Зберегти</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

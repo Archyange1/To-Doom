@@ -1,0 +1,19 @@
+{
+  "name": "To Doom — Дошка задач",
+  "short_name": "To Doom",
+  "description": "Персональна дошка задач із синхронізацією по Wi-Fi та підтримкою MCP",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d0f12",
+  "theme_color": "#0d0f12",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "128x128 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
+

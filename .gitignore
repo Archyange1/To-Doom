@@ -1,0 +1,7 @@
+node_modules/
+android-build/out/
+android-build/assets/
+data/
+*.lnk
+*.apk
+*.zip
