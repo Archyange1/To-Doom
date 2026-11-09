@@ -29,34 +29,40 @@
     return 'Ви';
   }
 
+  const SEED_TIMESTAMP = 1700000000000;
+
   function getInitialOfflineState() {
     try {
       const saved = localStorage.getItem('todoom_offline_state');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && Array.isArray(parsed.projects) && Array.isArray(parsed.tasks)) {
+          if (!parsed.deletedProjects || typeof parsed.deletedProjects !== 'object' || Array.isArray(parsed.deletedProjects)) {
+            parsed.deletedProjects = {};
+          }
           return parsed;
         }
       }
     } catch (_) {}
     return {
-      version: '1.2.0',
+      version: '1.2.1',
       nextTaskId: 17,
       activeProjectId: 'proj-1',
+      deletedProjects: {},
       settings: {
         githubRepo: localStorage.getItem('todoom_github_repo') || 'Archyange1/To-Doom',
         githubBranch: localStorage.getItem('todoom_github_branch') || 'main'
       },
       projects: [
-        { id: 'proj-1', name: 'Запуск сайту', color: '#22c55e', agentEnabled: true, createdAt: Date.now() - 86400000 * 3, updatedAt: Date.now() - 86400000 * 3 },
-        { id: 'proj-2', name: 'Мобільний додаток', color: '#f59e0b', agentEnabled: false, createdAt: Date.now() - 86400000 * 2, updatedAt: Date.now() - 86400000 * 2 }
+        { id: 'proj-1', name: 'Запуск сайту', color: '#22c55e', agentEnabled: true, createdAt: SEED_TIMESTAMP, updatedAt: SEED_TIMESTAMP },
+        { id: 'proj-2', name: 'Мобільний додаток', color: '#f59e0b', agentEnabled: false, createdAt: SEED_TIMESTAMP, updatedAt: SEED_TIMESTAMP }
       ],
       tasks: [
-        { id: 12, projectId: 'proj-1', title: 'Написати інструкцію з налаштування', epic: 'Документація', column: 0, progress: 40, assignee: 'Codex', dotColor: '#a855f7', order: 0, deleted: false, updatedAt: Date.now() - 18000000 },
-        { id: 13, projectId: 'proj-1', title: 'Підключити ШІ-агентів (MCP)', epic: 'Інтеграція', column: 1, progress: 75, assignee: 'Codex', dotColor: '#f59e0b', order: 0, deleted: false, updatedAt: Date.now() - 14000000 },
-        { id: 14, projectId: 'proj-1', title: 'Перевірити сценарій онбордингу', epic: 'UX', column: 1, progress: 45, assignee: 'Claude', dotColor: '#a855f7', order: 1, deleted: false, updatedAt: Date.now() - 10000000 },
-        { id: 15, projectId: 'proj-1', title: 'Створити дошку проєкту', epic: 'Ядро', column: 2, progress: 100, assignee: 'Ви', dotColor: '#22c55e', order: 0, deleted: false, updatedAt: Date.now() - 7000000 },
-        { id: 16, projectId: 'proj-1', title: 'Підготувати чекліст релізу', epic: 'Реліз', column: 0, progress: 10, assignee: 'Ви', dotColor: '#f59e0b', order: 1, deleted: false, updatedAt: Date.now() - 3600000 }
+        { id: 12, projectId: 'proj-1', title: 'Написати інструкцію з налаштування', epic: 'Документація', column: 0, progress: 40, assignee: 'Codex', dotColor: '#a855f7', order: 0, deleted: false, updatedAt: SEED_TIMESTAMP },
+        { id: 13, projectId: 'proj-1', title: 'Підключити ШІ-агентів (MCP)', epic: 'Інтеграція', column: 1, progress: 75, assignee: 'Codex', dotColor: '#f59e0b', order: 0, deleted: false, updatedAt: SEED_TIMESTAMP },
+        { id: 14, projectId: 'proj-1', title: 'Перевірити сценарій онбордингу', epic: 'UX', column: 1, progress: 45, assignee: 'Claude', dotColor: '#a855f7', order: 1, deleted: false, updatedAt: SEED_TIMESTAMP },
+        { id: 15, projectId: 'proj-1', title: 'Створити дошку проєкту', epic: 'Ядро', column: 2, progress: 100, assignee: 'Ви', dotColor: '#22c55e', order: 0, deleted: false, updatedAt: SEED_TIMESTAMP },
+        { id: 16, projectId: 'proj-1', title: 'Підготувати чекліст релізу', epic: 'Реліз', column: 0, progress: 10, assignee: 'Ви', dotColor: '#f59e0b', order: 1, deleted: false, updatedAt: SEED_TIMESTAMP }
       ]
     };
   }
@@ -65,6 +71,8 @@
   let clientId = null;
   let boardState = getInitialOfflineState();
   let hasDirtyOfflineChanges = localStorage.getItem('todoom_dirty') === '1';
+  let awaitingHelloSync = false;
+  const recentClientDeletePushes = new Map();
   let peers = [];
   let peerPresence = new Map();
   let activeMobileCol = 0;
@@ -296,6 +304,10 @@
         createdAt: Date.now(),
         updatedAt: Date.now()
       };
+      if (!boardState.deletedProjects || typeof boardState.deletedProjects !== 'object') {
+        boardState.deletedProjects = {};
+      }
+      delete boardState.deletedProjects[newProj.id];
       boardState.projects.push(newProj);
       boardState.activeProjectId = newProj.id;
     } else if (type === 'UPDATE_PROJECT') {
@@ -315,9 +327,20 @@
       }
     } else if (type === 'DELETE_PROJECT') {
       if (boardState.projects.length > 1) {
+        const targetProj = boardState.projects.find(x => x.id === payload.projectId);
+        if (!boardState.deletedProjects || typeof boardState.deletedProjects !== 'object') {
+          boardState.deletedProjects = {};
+        }
+        const delTs = Math.max(
+          Number(payload.deletedAt) || Date.now(),
+          Number((targetProj && (targetProj.updatedAt || targetProj.createdAt)) || 0) + 1
+        );
+        boardState.deletedProjects[payload.projectId] = Math.max(Number(boardState.deletedProjects[payload.projectId]) || 0, delTs);
         boardState.projects = boardState.projects.filter(x => x.id !== payload.projectId);
         boardState.tasks = boardState.tasks.filter(t => t.projectId !== payload.projectId);
-        boardState.activeProjectId = boardState.projects[0].id;
+        if (boardState.projects.length > 0 && !boardState.projects.some(x => x.id === boardState.activeProjectId)) {
+          boardState.activeProjectId = boardState.projects[0].id;
+        }
       }
     } else if (type === 'CREATE_TASK') {
       const task = {
@@ -372,6 +395,58 @@
     renderAll();
   }
 
+  function applyClientTombstones(incomingState, activeSocket = null) {
+    if (!incomingState || !Array.isArray(incomingState.projects)) return incomingState;
+    const mergedTombstones = {
+      ...((boardState && boardState.deletedProjects) || {}),
+      ...((incomingState && incomingState.deletedProjects) || {})
+    };
+    for (const [k, v] of Object.entries((boardState && boardState.deletedProjects) || {})) {
+      const sv = Number((incomingState.deletedProjects || {})[k]) || 0;
+      const lv = Number(v) || 0;
+      if (lv > sv) mergedTombstones[k] = lv;
+    }
+
+    const filteredProjects = [];
+    for (const p of incomingState.projects) {
+      if (!p || !p.id) continue;
+      const delTs = Number(mergedTombstones[p.id]) || 0;
+      const projTs = Number(p.updatedAt || p.createdAt || 0);
+      if (delTs > 0 && delTs >= projTs) {
+        if (activeSocket && activeSocket.readyState === WebSocket.OPEN) {
+          const lastPush = recentClientDeletePushes.get(p.id) || 0;
+          if (Date.now() - lastPush > 3000) {
+            recentClientDeletePushes.set(p.id, Date.now());
+            try {
+              activeSocket.send(JSON.stringify({
+                type: 'ACTION',
+                action: { type: 'DELETE_PROJECT', payload: { projectId: p.id, deletedAt: delTs } }
+              }));
+            } catch (_) {}
+          }
+        }
+        continue;
+      }
+      if (delTs > 0 && projTs > delTs) {
+        delete mergedTombstones[p.id];
+      }
+      filteredProjects.push(p);
+    }
+
+    if (filteredProjects.length > 0) {
+      incomingState.projects = filteredProjects;
+      const survivingIds = new Set(filteredProjects.map(p => p.id));
+      if (Array.isArray(incomingState.tasks)) {
+        incomingState.tasks = incomingState.tasks.filter(t => survivingIds.has(t.projectId));
+      }
+      if (!survivingIds.has(incomingState.activeProjectId)) {
+        incomingState.activeProjectId = filteredProjects[0].id;
+      }
+    }
+    incomingState.deletedProjects = mergedTombstones;
+    return incomingState;
+  }
+
   // WebSocket Connection & Sync
   function scheduleReconnect() {
     if (reconnectTimer) clearTimeout(reconnectTimer);
@@ -416,16 +491,28 @@
       if (isAndroidApk && remotePcHost) {
         try { localStorage.setItem('todoom_pc_host', remotePcHost); } catch (_) {}
       }
+      const hadDirty = hasDirtyOfflineChanges;
+      awaitingHelloSync = hadDirty;
       const helloMsg = {
         type: 'HELLO',
         name: currentUserName,
         deviceType: isAndroidApk ? 'tablet' : 'desktop'
       };
-      if (hasDirtyOfflineChanges) {
+      if (hadDirty) {
         helloMsg.offlineState = boardState;
         clearDirtyFlag();
       }
       socket.send(JSON.stringify(helloMsg));
+      if (hadDirty && boardState.deletedProjects) {
+        for (const [delProjId, delTs] of Object.entries(boardState.deletedProjects)) {
+          if (Number(delTs) > 0) {
+            socket.send(JSON.stringify({
+              type: 'ACTION',
+              action: { type: 'DELETE_PROJECT', payload: { projectId: delProjId, deletedAt: Number(delTs) } }
+            }));
+          }
+        }
+      }
       renderPeersBadge();
     });
 
@@ -435,15 +522,16 @@
         const msg = JSON.parse(ev.data);
         if (msg.type === 'INIT') {
           clientId = msg.clientId;
-          if (!hasDirtyOfflineChanges) {
-            boardState = msg.state;
+          if (!hasDirtyOfflineChanges && !awaitingHelloSync) {
+            boardState = applyClientTombstones(msg.state, socket);
             saveOfflineState(false);
           }
           peers = msg.peers || [];
           renderAll();
         } else if (msg.type === 'STATE_UPDATE') {
+          awaitingHelloSync = false;
           if (!isScrubbingProgress) {
-            boardState = msg.state;
+            boardState = applyClientTombstones(msg.state, socket);
             if (msg.peers) peers = msg.peers;
             saveOfflineState(false);
             renderAll(msg.event);
@@ -495,6 +583,9 @@
     }
     if (type === 'CREATE_PROJECT' && !payload.id) {
       payload.id = 'proj-' + Date.now();
+    }
+    if (type === 'DELETE_PROJECT' && !payload.deletedAt) {
+      payload.deletedAt = Date.now();
     }
 
     applyLocalAction(type, payload, isConnected);
@@ -1362,9 +1453,9 @@
           ok: true,
           repo,
           branch,
-          localVersion: boardState.version || '1.2.0',
-          remoteVersion: remotePkg.version || '1.2.0',
-          hasUpdate: remotePkg.version !== (boardState.version || '1.2.0')
+          localVersion: boardState.version || '1.2.1',
+          remoteVersion: remotePkg.version || '1.2.1',
+          hasUpdate: remotePkg.version !== (boardState.version || '1.2.1')
         };
       }
 

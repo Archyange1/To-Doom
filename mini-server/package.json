@@ -1,6 +1,6 @@
 {
   "name": "to-doom-server",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "To Doom — Автономний сервер синхронізації (Wi-Fi / Tailscale / iPhone / Планшет / ПК / MCP)",
   "main": "server.js",
   "scripts": {

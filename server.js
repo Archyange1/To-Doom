@@ -7,7 +7,8 @@ const dgram = require('dgram');
 const { WebSocketServer, WebSocket } = require('ws');
 const QRCode = require('qrcode');
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.2.1';
+const SEED_TIMESTAMP = 1700000000000;
 
 // Share data directory between D:\To Doom and project folder if available
 const SHARED_DATA_DIR = 'D:\\To Doom\\data';
@@ -27,6 +28,7 @@ function getInitialState() {
     version: APP_VERSION,
     nextTaskId: 17,
     activeProjectId: 'proj-1',
+    deletedProjects: {},
     settings: {
       githubRepo: 'Archyange1/To-Doom',
       githubBranch: 'main',
@@ -38,16 +40,16 @@ function getInitialState() {
         name: 'Запуск сайту',
         color: '#22c55e',
         agentEnabled: true,
-        createdAt: Date.now() - 86400000 * 3,
-        updatedAt: Date.now() - 86400000 * 3
+        createdAt: SEED_TIMESTAMP,
+        updatedAt: SEED_TIMESTAMP
       },
       {
         id: 'proj-2',
         name: 'Мобільний додаток',
         color: '#f59e0b',
         agentEnabled: false,
-        createdAt: Date.now() - 86400000 * 2,
-        updatedAt: Date.now() - 86400000 * 2
+        createdAt: SEED_TIMESTAMP,
+        updatedAt: SEED_TIMESTAMP
       }
     ],
     tasks: [
@@ -62,7 +64,7 @@ function getInitialState() {
         dotColor: '#a855f7',
         order: 0,
         deleted: false,
-        updatedAt: Date.now() - 3600000 * 5
+        updatedAt: SEED_TIMESTAMP
       },
       {
         id: 13,
@@ -75,7 +77,7 @@ function getInitialState() {
         dotColor: '#f59e0b',
         order: 0,
         deleted: false,
-        updatedAt: Date.now() - 3600000 * 4
+        updatedAt: SEED_TIMESTAMP
       },
       {
         id: 14,
@@ -88,7 +90,7 @@ function getInitialState() {
         dotColor: '#a855f7',
         order: 1,
         deleted: false,
-        updatedAt: Date.now() - 3600000 * 3
+        updatedAt: SEED_TIMESTAMP
       },
       {
         id: 15,
@@ -101,7 +103,7 @@ function getInitialState() {
         dotColor: '#22c55e',
         order: 0,
         deleted: false,
-        updatedAt: Date.now() - 3600000 * 2
+        updatedAt: SEED_TIMESTAMP
       },
       {
         id: 16,
@@ -114,7 +116,7 @@ function getInitialState() {
         dotColor: '#f59e0b',
         order: 1,
         deleted: false,
-        updatedAt: Date.now() - 3600000
+        updatedAt: SEED_TIMESTAMP
       },
       {
         id: 10,
@@ -127,7 +129,7 @@ function getInitialState() {
         dotColor: '#22c55e',
         order: 0,
         deleted: false,
-        updatedAt: Date.now() - 7200000
+        updatedAt: SEED_TIMESTAMP
       },
       {
         id: 11,
@@ -140,7 +142,7 @@ function getInitialState() {
         dotColor: '#a855f7',
         order: 0,
         deleted: false,
-        updatedAt: Date.now() - 5400000
+        updatedAt: SEED_TIMESTAMP
       }
     ]
   };
@@ -158,13 +160,28 @@ function normalizeState(st) {
   if (!st.settings.githubBranch) {
     st.settings.githubBranch = 'main';
   }
-  if (!st.version) st.version = APP_VERSION;
+  if (!st.deletedProjects || typeof st.deletedProjects !== 'object' || Array.isArray(st.deletedProjects)) {
+    st.deletedProjects = {};
+  }
+  st.version = APP_VERSION;
   if (Array.isArray(st.projects)) {
+    const surviving = st.projects.filter((p) => {
+      if (!p || !p.id) return false;
+      const delTs = Number(st.deletedProjects[p.id]) || 0;
+      const projTs = Number(p.updatedAt || p.createdAt || 0);
+      return !(delTs > 0 && delTs >= projTs);
+    });
+    if (surviving.length > 0) {
+      st.projects = surviving;
+    }
     st.projects.forEach((p, idx) => {
       if (typeof p.agentEnabled !== 'boolean') {
         p.agentEnabled = idx === 0;
       }
     });
+    if (st.projects.length > 0 && !st.projects.some(p => p.id === st.activeProjectId)) {
+      st.activeProjectId = st.projects[0].id;
+    }
   }
   return st;
 }
@@ -275,6 +292,9 @@ function getDotColorForAssignee(assignee) {
 function mergeOfflineState(incoming) {
   if (!incoming) return false;
   let changed = false;
+  if (!state.deletedProjects || typeof state.deletedProjects !== 'object' || Array.isArray(state.deletedProjects)) {
+    state.deletedProjects = {};
+  }
 
   if (incoming.settings && incoming.settings.githubRepo && !state.settings.githubRepo) {
     state.settings.githubRepo = incoming.settings.githubRepo;
@@ -282,9 +302,50 @@ function mergeOfflineState(incoming) {
     changed = true;
   }
 
+  // 1. Merge project deletion tombstones FIRST so deleted projects stay deleted across all devices
+  if (incoming.deletedProjects && typeof incoming.deletedProjects === 'object' && !Array.isArray(incoming.deletedProjects)) {
+    for (const [projId, rawTs] of Object.entries(incoming.deletedProjects)) {
+      const delTs = Number(rawTs) || 0;
+      if (!projId || delTs <= 0) continue;
+      const prevDelTs = Number(state.deletedProjects[projId]) || 0;
+      if (delTs > prevDelTs) {
+        state.deletedProjects[projId] = delTs;
+        changed = true;
+      }
+      const effectiveDelTs = Math.max(prevDelTs, delTs);
+      const existingIdx = state.projects.findIndex(p => p.id === projId);
+      if (existingIdx !== -1) {
+        const existingProj = state.projects[existingIdx];
+        const projTs = Number(existingProj.updatedAt || existingProj.createdAt || 0);
+        const hasSurvivingIncomingProj = Array.isArray(incoming.projects) && incoming.projects.some((ip) => {
+          if (!ip || !ip.id || ip.id === projId) return false;
+          const ipDel = Math.max(Number(state.deletedProjects[ip.id] || 0), Number((incoming.deletedProjects || {})[ip.id] || 0));
+          const ipTs = Number(ip.updatedAt || ip.createdAt || 0);
+          return !(ipDel > 0 && ipDel >= ipTs);
+        });
+        if (effectiveDelTs >= projTs && (state.projects.length > 1 || hasSurvivingIncomingProj)) {
+          state.projects.splice(existingIdx, 1);
+          state.tasks = state.tasks.filter(t => t.projectId !== projId);
+          changed = true;
+        }
+      }
+    }
+  }
+
+  // 2. Merge active projects (skipping any blocked by a deletion tombstone)
   if (Array.isArray(incoming.projects)) {
     for (const incProj of incoming.projects) {
       if (!incProj || !incProj.id) continue;
+      const delTs = Number(state.deletedProjects[incProj.id]) || 0;
+      const incTs = Number(incProj.updatedAt || incProj.createdAt || 0);
+      if (delTs > 0 && delTs >= incTs) {
+        continue;
+      }
+      if (delTs > 0 && incTs > delTs) {
+        delete state.deletedProjects[incProj.id];
+        changed = true;
+      }
+
       const existing = state.projects.find(p => p.id === incProj.id);
       if (!existing) {
         state.projects.push({
@@ -292,21 +353,31 @@ function mergeOfflineState(incoming) {
           agentEnabled: typeof incProj.agentEnabled === 'boolean' ? incProj.agentEnabled : true
         });
         changed = true;
-      } else if ((incProj.updatedAt || 0) > (existing.updatedAt || 0)) {
+      } else if (incTs > (existing.updatedAt || 0)) {
         existing.name = incProj.name || existing.name;
         existing.color = incProj.color || existing.color;
         if (typeof incProj.agentEnabled === 'boolean') {
           existing.agentEnabled = incProj.agentEnabled;
         }
-        existing.updatedAt = incProj.updatedAt;
+        existing.updatedAt = incTs;
         changed = true;
       }
     }
   }
 
+  if (state.projects.length > 0 && !state.projects.some(p => p.id === state.activeProjectId)) {
+    state.activeProjectId = state.projects[0].id;
+    changed = true;
+  }
+
+  // 3. Merge tasks (skip tasks whose parent project is deleted)
   if (Array.isArray(incoming.tasks)) {
     for (const incTask of incoming.tasks) {
       if (!incTask || !incTask.title) continue;
+      const projDelTs = Number(state.deletedProjects[incTask.projectId]) || 0;
+      if (projDelTs > 0 && projDelTs >= (incTask.updatedAt || 0)) {
+        continue;
+      }
       let existing = null;
       if (incTask.clientUid) {
         existing = state.tasks.find(t => t.clientUid === incTask.clientUid);
@@ -415,6 +486,9 @@ function applyAction(action, meta = {}) {
         createdAt: Date.now(),
         updatedAt: Date.now()
       };
+      if (state.deletedProjects && state.deletedProjects[newProj.id]) {
+        delete state.deletedProjects[newProj.id];
+      }
       state.projects.push(newProj);
       state.activeProjectId = newProj.id;
       saveState(true);
@@ -449,15 +523,35 @@ function applyAction(action, meta = {}) {
     }
 
     case 'DELETE_PROJECT': {
+      const targetProj = state.projects.find(p => p.id === payload.projectId);
+      if (!state.deletedProjects || typeof state.deletedProjects !== 'object' || Array.isArray(state.deletedProjects)) {
+        state.deletedProjects = {};
+      }
+      if (!targetProj) {
+        if (payload.projectId && payload.deletedAt) {
+          const ts = Number(payload.deletedAt) || Date.now();
+          if (ts > (Number(state.deletedProjects[payload.projectId]) || 0)) {
+            state.deletedProjects[payload.projectId] = ts;
+            saveState(false);
+          }
+        }
+        return { ok: true, state };
+      }
       if (state.projects.length <= 1) {
         return { ok: false, error: 'Не можна видалити єдиний проєкт' };
       }
+      const now = Math.max(Number(payload.deletedAt) || Date.now(), Number(targetProj.updatedAt || targetProj.createdAt || 0) + 1);
+      state.deletedProjects[payload.projectId] = Math.max(Number(state.deletedProjects[payload.projectId]) || 0, now);
       state.projects = state.projects.filter(p => p.id !== payload.projectId);
       state.tasks = state.tasks.filter(t => t.projectId !== payload.projectId);
-      if (state.activeProjectId === payload.projectId) {
+      if (state.activeProjectId === payload.projectId && state.projects.length > 0) {
         state.activeProjectId = state.projects[0].id;
       }
-      saveState(true);
+      saveState(false);
+      broadcastState({
+        source,
+        event: { type: 'project_deleted', projectId: payload.projectId, deletedAt: now }
+      });
       return { ok: true, state };
     }
 
@@ -751,11 +845,65 @@ async function applyGithubUpdate(repoInput, branchInput) {
     version: newVersion
   });
 
+  scheduleRuntimeRestartAfterUpdate(newVersion);
+
   return {
     ok: true,
     version: newVersion,
     updatedFiles: Array.from(downloaded.keys())
   };
+}
+
+let activeHttpServer = null;
+let activeWssServer = null;
+let activePingTimer = null;
+
+function scheduleRuntimeRestartAfterUpdate(newVersion) {
+  try {
+    process.emit('todoom-app-updated', newVersion);
+  } catch (_) {}
+
+  if (require.main !== module) return;
+
+  setTimeout(() => {
+    const finishRestart = () => {
+      try {
+        const inDocker = fs.existsSync('/.dockerenv');
+        const inSystemd = Boolean(process.env.INVOCATION_ID);
+        if (!inDocker && !inSystemd) {
+          const { spawn } = require('child_process');
+          const child = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
+            cwd: __dirname,
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: true
+          });
+          child.unref();
+        }
+      } catch (_) {}
+      process.exit(0);
+    };
+
+    try { if (activePingTimer) clearInterval(activePingTimer); } catch (_) {}
+    try { if (activeWssServer) activeWssServer.close(); } catch (_) {}
+    if (activeHttpServer) {
+      let exited = false;
+      activeHttpServer.close(() => {
+        if (!exited) {
+          exited = true;
+          setTimeout(finishRestart, 250);
+        }
+      });
+      setTimeout(() => {
+        if (!exited) {
+          exited = true;
+          finishRestart();
+        }
+      }, 900);
+    } else {
+      finishRestart();
+    }
+  }, 700);
 }
 
 const clients = new Map();
@@ -796,6 +944,15 @@ function broadcast(msgObj, excludeWs = null) {
   }
   if (outboundPeerWs && outboundPeerWs !== excludeWs && outboundPeerWs.readyState === WebSocket.OPEN) {
     if (msgObj.type === 'STATE_UPDATE') {
+      if (msgObj.event && msgObj.event.type === 'project_deleted' && msgObj.source !== 'peer') {
+        outboundPeerWs.send(JSON.stringify({
+          type: 'ACTION',
+          action: {
+            type: 'DELETE_PROJECT',
+            payload: { projectId: msgObj.event.projectId, deletedAt: msgObj.event.deletedAt }
+          }
+        }));
+      }
       outboundPeerWs.send(JSON.stringify({
         type: 'ACTION',
         action: { type: 'MERGE_OFFLINE_STATE', payload: { state: msgObj.state } }
@@ -859,12 +1016,34 @@ function connectToPeerServer(peerUrl, autoRetry = true) {
       broadcastPeers();
     });
 
+    const lastPeerDeleteSync = new Map();
     ws.on('message', (raw) => {
       if (outboundPeerWs !== ws) return;
       try {
         const msg = JSON.parse(raw.toString());
         if ((msg.type === 'STATE_UPDATE' || msg.type === 'INIT') && msg.state) {
-          // Merge server state into local (never overwrite, so local-only projects/tasks survive)
+          // If the remote server is on an older build without deletedProjects support, push DELETE_PROJECT for stale projects
+          if (Array.isArray(msg.state.projects) && state.deletedProjects) {
+            for (const incProj of msg.state.projects) {
+              if (!incProj || !incProj.id) continue;
+              const delTs = Number(state.deletedProjects[incProj.id]) || 0;
+              const incTs = Number(incProj.updatedAt || incProj.createdAt || 0);
+              if (delTs > 0 && delTs >= incTs) {
+                const lastSent = lastPeerDeleteSync.get(incProj.id) || 0;
+                if (Date.now() - lastSent > 3000) {
+                  lastPeerDeleteSync.set(incProj.id, Date.now());
+                  ws.send(JSON.stringify({
+                    type: 'ACTION',
+                    action: {
+                      type: 'DELETE_PROJECT',
+                      payload: { projectId: incProj.id, deletedAt: delTs }
+                    }
+                  }));
+                }
+              }
+            }
+          }
+          // Merge server state into local (respecting deletedProjects tombstones)
           const changed = mergeOfflineState(msg.state);
           if (changed) {
             broadcastState({ source: msg.source === 'mcp' ? 'mcp' : 'peer', excludeWs: ws, event: msg.event });
@@ -1123,6 +1302,8 @@ function startServer(port = DEFAULT_PORT) {
 
     const wss = new WebSocketServer({ server });
     wss.on('error', () => {});
+    activeHttpServer = server;
+    activeWssServer = wss;
 
     const pingInterval = setInterval(() => {
       for (const ws of clients.keys()) {
@@ -1131,6 +1312,7 @@ function startServer(port = DEFAULT_PORT) {
         }
       }
     }, 25000);
+    activePingTimer = pingInterval;
 
     wss.on('close', () => clearInterval(pingInterval));
 
@@ -1287,4 +1469,12 @@ if (require.main === module) {
   });
 }
 
-module.exports = { startServer, applyAction, getLocalIPs };
+function closeServer() {
+  try { if (activePingTimer) clearInterval(activePingTimer); } catch (_) {}
+  try { if (outboundReconnectTimer) clearTimeout(outboundReconnectTimer); } catch (_) {}
+  try { if (outboundPeerWs) outboundPeerWs.close(); } catch (_) {}
+  try { if (activeWssServer) activeWssServer.close(); } catch (_) {}
+  try { if (activeHttpServer) activeHttpServer.close(); } catch (_) {}
+}
+
+module.exports = { startServer, applyAction, getLocalIPs, closeServer };

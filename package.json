@@ -1,6 +1,6 @@
 {
   "name": "to-doom",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "To Doom — Дошка задач для Windows, планшета, iPhone та ШІ-агентів (MCP) із синхронізацією по Wi-Fi/Tailscale та оновленням через GitHub",
   "main": "main.js",
   "scripts": {

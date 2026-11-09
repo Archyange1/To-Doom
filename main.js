@@ -1,6 +1,6 @@
 const { app, BrowserWindow, ipcMain, screen, shell, globalShortcut } = require('electron');
 const path = require('path');
-const { startServer } = require('./server');
+const { startServer, closeServer } = require('./server');
 
 let mainWindow = null;
 let isTucked = false;
@@ -165,6 +165,16 @@ app.whenReady().then(async () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+});
+
+process.on('todoom-app-updated', () => {
+  setTimeout(() => {
+    try { if (typeof closeServer === 'function') closeServer(); } catch (_) {}
+    setTimeout(() => {
+      app.relaunch();
+      app.exit(0);
+    }, 250);
+  }, 800);
 });
 
 app.on('window-all-closed', () => {
