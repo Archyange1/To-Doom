@@ -110,13 +110,16 @@ async function dispatchBoardAction(action) {
     if (proj.agentEnabled === false) {
       return { ok: false, error: `Керування ШІ-агентом для проєкту «${proj.name}» вимкнено.` };
     }
+    const dontDo = Boolean(payload.dontDo ?? payload.dont_do);
+    const col = dontDo ? 2 : (typeof payload.column === 'number' ? payload.column : 0);
     const task = {
       id: state.nextTaskId || 1,
       projectId: proj.id,
       title: payload.title,
       epic: payload.epic || '',
-      column: typeof payload.column === 'number' ? payload.column : 0,
-      progress: typeof payload.progress === 'number' ? payload.progress : (payload.column === 2 ? 100 : 0),
+      column: col,
+      progress: dontDo ? 100 : (typeof payload.progress === 'number' ? payload.progress : (col === 2 ? 100 : 0)),
+      dontDo,
       assignee: payload.assignee || 'Claude',
       dotColor: '#a855f7',
       order: 0,
@@ -139,9 +142,18 @@ async function dispatchBoardAction(action) {
     if (typeof payload.title === 'string') task.title = payload.title;
     if (typeof payload.epic === 'string') task.epic = payload.epic;
     if (typeof payload.assignee === 'string') task.assignee = payload.assignee;
+    const hasExplicitDontDo = typeof payload.dontDo === 'boolean' || typeof payload.dont_do === 'boolean';
+    if (hasExplicitDontDo) {
+      task.dontDo = Boolean(payload.dontDo ?? payload.dont_do);
+      if (task.dontDo && typeof payload.column !== 'number') {
+        task.column = 2;
+        task.progress = 100;
+      }
+    }
     if (typeof payload.column === 'number') {
       task.column = Math.max(0, Math.min(2, payload.column));
       if (task.column === 2 && typeof payload.progress !== 'number') task.progress = 100;
+      if (task.column < 2 && !hasExplicitDontDo) task.dontDo = false;
     }
     if (typeof payload.progress === 'number') {
       task.progress = Math.max(0, Math.min(100, Math.round(payload.progress)));
@@ -198,6 +210,7 @@ const TOOLS = [
         epic: { type: 'string', description: 'Епік або категорія задачі' },
         column: { type: 'number', description: 'Колонка: 0 = До виконання, 1 = В роботі, 2 = Виконано' },
         progress: { type: 'number', description: 'Прогрес виконання від 0 до 100' },
+        dont_do: { type: 'boolean', description: 'Позначити задачу у Виконано червоним статусом Don\'t Do (відхилено / не актуально)' },
         assignee: { type: 'string', description: 'Виконавець (наприклад: Claude, Codex, Antigravity)' }
       },
       required: ['title']
@@ -205,13 +218,14 @@ const TOOLS = [
   },
   {
     name: 'update_task',
-    description: 'Оновити задачу за її числовим ID (перемістити між колонками 0/1/2, змінити прогрес 0-100%, назву або виконавця).',
+    description: 'Оновити задачу за її числовим ID (перемістити між колонками 0/1/2, змінити прогрес 0-100%, позначити як Don\'t Do, змінити назву або виконавця).',
     inputSchema: {
       type: 'object',
       properties: {
         task_id: { type: 'number', description: 'Числовий ID задачі (наприклад, 14 для #14)' },
         column: { type: 'number', description: 'Нова колонка: 0 (До виконання), 1 (В роботі), 2 (Виконано)' },
         progress: { type: 'number', description: 'Новий відсоток прогресу (0 - 100)' },
+        dont_do: { type: 'boolean', description: 'Позначити як Don\'t Do у Виконано (true) або зняти позначку (false)' },
         title: { type: 'string', description: 'Нова назва задачі (необов\'язково)' },
         epic: { type: 'string', description: 'Новий епік (необов\'язково)' },
         assignee: { type: 'string', description: 'Виконавець (наприклад, Claude або Codex)' }
@@ -307,9 +321,10 @@ async function handleRequest(msg) {
         };
       }
       const tasks = (state.tasks || []).filter(t => !t.deleted && t.projectId === proj.id);
-      const lines = tasks.map(t =>
-        `#${t.id} [${COLUMN_NAMES[t.column] || 'До виконання'}] ${t.title} — ${t.progress}% · ${t.assignee}${t.epic ? ` (${t.epic})` : ''}`
-      );
+      const lines = tasks.map(t => {
+        const colLabel = t.dontDo ? `${COLUMN_NAMES[t.column] || 'Виконано'} · Don't Do` : (COLUMN_NAMES[t.column] || 'До виконання');
+        return `#${t.id} [${colLabel}] ${t.title} — ${t.progress}% · ${t.assignee}${t.epic ? ` (${t.epic})` : ''}`;
+      });
       return {
         jsonrpc: '2.0',
         id,
@@ -355,6 +370,7 @@ async function handleRequest(msg) {
           epic: args.epic || '',
           column: args.column ?? 0,
           progress: args.progress ?? (args.column === 2 ? 100 : 0),
+          dont_do: args.dont_do,
           assignee: args.assignee || 'Claude'
         }
       });
@@ -373,7 +389,7 @@ async function handleRequest(msg) {
           content: [
             {
               type: 'text',
-              text: `[${proj.name}] #${t.id} ${t.title} -> ${COLUMN_NAMES[t.column]} · ${t.progress}%`
+              text: `[${proj.name}] #${t.id} ${t.title} -> ${COLUMN_NAMES[t.column]}${t.dontDo ? " (Don't Do)" : ''} · ${t.progress}%`
             }
           ]
         }
@@ -387,6 +403,7 @@ async function handleRequest(msg) {
           task_id: args.task_id,
           column: args.column,
           progress: args.progress,
+          dont_do: args.dont_do,
           title: args.title,
           epic: args.epic,
           assignee: args.assignee,
@@ -408,7 +425,7 @@ async function handleRequest(msg) {
           content: [
             {
               type: 'text',
-              text: `#${t.id} ${t.title} -> ${COLUMN_NAMES[t.column]} · ${t.progress}%`
+              text: `#${t.id} ${t.title} -> ${COLUMN_NAMES[t.column]}${t.dontDo ? " (Don't Do)" : ''} · ${t.progress}%`
             }
           ]
         }

@@ -1,5 +1,5 @@
 (() => {
-  const CLIENT_VERSION = '1.2.5';
+  const CLIENT_VERSION = '1.2.6';
   const isElectron = Boolean(window.electronAPI && window.electronAPI.isElectron);
   const isAndroidApk = location.protocol === 'file:' || Boolean(window.AndroidBridge);
   const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent) ||
@@ -384,6 +384,8 @@
         }
       }
     } else if (type === 'CREATE_TASK') {
+      const dontDo = Boolean(payload.dontDo ?? payload.dont_do);
+      const col = dontDo ? 2 : (payload.column ?? 0);
       const task = {
         id: boardState.nextTaskId || (Math.max(0, ...boardState.tasks.map(t => t.id)) + 1),
         clientUid: payload.clientUid || ('uid-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6)),
@@ -391,8 +393,9 @@
         projectId: payload.projectId || boardState.activeProjectId,
         title: payload.title,
         epic: payload.epic || '',
-        column: payload.column ?? 0,
-        progress: payload.progress ?? 0,
+        column: col,
+        progress: dontDo ? 100 : (payload.progress ?? (col === 2 ? 100 : 0)),
+        dontDo,
         assignee: payload.assignee || currentUserName,
         dotColor: '#22c55e',
         order: boardState.tasks.length,
@@ -408,9 +411,18 @@
         if (typeof payload.title === 'string') t.title = payload.title;
         if (typeof payload.epic === 'string') t.epic = payload.epic;
         if (typeof payload.assignee === 'string') t.assignee = payload.assignee;
+        const hasExplicitDontDo = typeof payload.dontDo === 'boolean' || typeof payload.dont_do === 'boolean';
+        if (hasExplicitDontDo) {
+          t.dontDo = Boolean(payload.dontDo ?? payload.dont_do);
+          if (t.dontDo && typeof payload.column !== 'number') {
+            t.column = 2;
+            t.progress = 100;
+          }
+        }
         if (typeof payload.column === 'number') {
           t.column = payload.column;
           if (t.column === 2 && typeof payload.progress !== 'number') t.progress = 100;
+          if (t.column < 2 && !hasExplicitDontDo) t.dontDo = false;
         }
         if (typeof payload.progress === 'number') t.progress = payload.progress;
         t.updatedAt = Date.now();
@@ -1048,7 +1060,7 @@
 
   function createTaskCardElement(task, lastEvent) {
     const card = document.createElement('article');
-    card.className = 'task-card';
+    card.className = 'task-card' + (task.dontDo ? ' is-dont-do' : '');
     if (lastEvent && lastEvent.task && Number(lastEvent.task.id) === Number(task.id)) {
       card.classList.add('mcp-highlight');
     }
@@ -1082,6 +1094,7 @@
         sendAction('UPDATE_TASK', {
           id: task.id,
           column: prevCol,
+          dontDo: false,
           progress: task.progress === 100 && prevCol < 2 ? 75 : task.progress
         });
       });
@@ -1100,11 +1113,37 @@
         sendAction('UPDATE_TASK', {
           id: task.id,
           column: nextCol,
+          dontDo: false,
           progress: nextCol === 2 ? 100 : task.progress
         });
       });
       actions.appendChild(nextBtn);
     }
+
+    const dontDoBtn = document.createElement('button');
+    dontDoBtn.type = 'button';
+    dontDoBtn.className = 'card-action-btn dont-do-btn' + (task.dontDo ? ' active' : '');
+    dontDoBtn.title = task.dontDo
+      ? 'Зняти позначку Don\'t Do (залишити як звичайну виконану)'
+      : 'Перемістити у «Виконано» як Don\'t Do (не актуально / відхилено)';
+    dontDoBtn.textContent = '⊘';
+    dontDoBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const nextDontDo = !task.dontDo;
+      sendAction('UPDATE_TASK', {
+        id: task.id,
+        column: 2,
+        progress: 100,
+        dontDo: nextDontDo,
+        actor: currentUserName
+      });
+      showToast(
+        nextDontDo
+          ? `⊘ Задачу #${task.id} переміщено у «Виконано» зі статусом Don't Do`
+          : `✓ Знято позначку Don't Do із задачі #${task.id}`
+      );
+    });
+    actions.appendChild(dontDoBtn);
 
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
@@ -1185,6 +1224,20 @@
     card.appendChild(progZone);
     card.appendChild(footer);
 
+    if (task.dontDo) {
+      const dontDoBanner = document.createElement('div');
+      dontDoBanner.className = 'dont-do-banner';
+      dontDoBanner.title = 'Задача не актуальна / відхилена (натисніть ⊘, щоб змінити)';
+      dontDoBanner.innerHTML = `
+        <div class="dont-do-banner-left">
+          <span class="dont-do-badge-pill">Don't Do</span>
+          <span class="dont-do-sub">Не актуально / відхилено</span>
+        </div>
+        <span>⊘</span>
+      `;
+      card.appendChild(dontDoBanner);
+    }
+
     setupProgressScrubbing(progZone, progTrack, progFill, pctText, task, card);
 
     card.addEventListener('dragstart', (e) => {
@@ -1194,6 +1247,7 @@
       }
       draggedTaskId = task.id;
       card.classList.add('dragging');
+      document.body.classList.add('is-dragging-card');
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('text/plain', String(task.id));
       sendPresence({ activeTaskId: task.id });
@@ -1202,7 +1256,10 @@
     card.addEventListener('dragend', () => {
       draggedTaskId = null;
       card.classList.remove('dragging');
+      document.body.classList.remove('is-dragging-card');
       document.querySelectorAll('.board-column').forEach(c => c.classList.remove('drag-over'));
+      const dz = document.getElementById('dont-do-dropzone');
+      if (dz) dz.classList.remove('drag-over-dont-do');
       sendPresence({ activeTaskId: null });
     });
 
@@ -1297,10 +1354,46 @@
         id: taskId,
         column: colIndex,
         progress: newProgress,
+        dontDo: false,
         actor: currentUserName
       });
     });
   });
+
+  const dontDoDropzone = document.getElementById('dont-do-dropzone');
+  if (dontDoDropzone) {
+    dontDoDropzone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'move';
+      dontDoDropzone.classList.add('drag-over-dont-do');
+    });
+
+    dontDoDropzone.addEventListener('dragleave', (e) => {
+      if (!dontDoDropzone.contains(e.relatedTarget)) {
+        dontDoDropzone.classList.remove('drag-over-dont-do');
+      }
+    });
+
+    dontDoDropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dontDoDropzone.classList.remove('drag-over-dont-do');
+      document.querySelectorAll('.board-column').forEach(c => c.classList.remove('drag-over'));
+      const idStr = e.dataTransfer.getData('text/plain') || String(draggedTaskId || '');
+      const taskId = Number(idStr);
+      if (!taskId) return;
+
+      sendAction('UPDATE_TASK', {
+        id: taskId,
+        column: 2,
+        progress: 100,
+        dontDo: true,
+        actor: currentUserName
+      });
+      showToast(`⊘ Задачу #${taskId} переміщено у «Виконано» зі статусом Don't Do`);
+    });
+  }
 
   taskForm.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -1916,9 +2009,26 @@
   const editTaskColumn = document.getElementById('edit-task-column');
   const editTaskProgress = document.getElementById('edit-task-progress');
   const editTaskProgressVal = document.getElementById('edit-task-progress-val');
+  const chkEditTaskDontDo = document.getElementById('chk-edit-task-dont-do');
 
   editTaskProgress.addEventListener('input', () => {
     editTaskProgressVal.textContent = `${editTaskProgress.value}%`;
+  });
+
+  if (chkEditTaskDontDo) {
+    chkEditTaskDontDo.addEventListener('change', () => {
+      if (chkEditTaskDontDo.checked) {
+        editTaskColumn.value = '2';
+        editTaskProgress.value = '100';
+        editTaskProgressVal.textContent = '100%';
+      }
+    });
+  }
+
+  editTaskColumn.addEventListener('change', () => {
+    if (Number(editTaskColumn.value) < 2 && chkEditTaskDontDo) {
+      chkEditTaskDontDo.checked = false;
+    }
   });
 
   function openEditTaskModal(task) {
@@ -1930,19 +2040,24 @@
     editTaskColumn.value = String(task.column);
     editTaskProgress.value = String(task.progress);
     editTaskProgressVal.textContent = `${task.progress}%`;
+    if (chkEditTaskDontDo) chkEditTaskDontDo.checked = Boolean(task.dontDo);
     openModal('modal-edit-task');
   }
 
   document.getElementById('form-edit-task').addEventListener('submit', (e) => {
     e.preventDefault();
     const id = Number(editTaskId.value);
+    const dontDo = chkEditTaskDontDo ? Boolean(chkEditTaskDontDo.checked) : false;
+    const col = dontDo ? 2 : Number(editTaskColumn.value);
+    const prog = dontDo ? 100 : Number(editTaskProgress.value);
     sendAction('UPDATE_TASK', {
       id,
       title: editTaskTitle.value.trim(),
       epic: editTaskEpic.value.trim(),
       assignee: editTaskAssignee.value.trim() || 'Ви',
-      column: Number(editTaskColumn.value),
-      progress: Number(editTaskProgress.value)
+      column: col,
+      progress: prog,
+      dontDo
     });
     closeModal('modal-edit-task');
   });

@@ -8,14 +8,14 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="To Doom" />
   <meta name="theme-color" content="#0d0f12" />
-  <link rel="manifest" href="manifest.json?v=1.2.5" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=1.2.5" />
+  <link rel="manifest" href="manifest.json?v=1.2.6" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=1.2.6" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
-  <link rel="apple-touch-icon" href="apple-touch-icon.png?v=1.2.5" />
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=1.2.5" />
-  <link rel="apple-touch-icon-precomposed" sizes="180x180" href="apple-touch-icon.png?v=1.2.5" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png?v=1.2.6" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=1.2.6" />
+  <link rel="apple-touch-icon-precomposed" sizes="180x180" href="apple-touch-icon.png?v=1.2.6" />
   <title>To Doom</title>
-  <link rel="stylesheet" href="styles.css?v=1.2.5" />
+  <link rel="stylesheet" href="styles.css?v=1.2.6" />
 </head>
 <body>
   <!-- Вузький зелений язичок біля краю екрана (коли вікно сховане на Windows) -->
@@ -37,7 +37,7 @@
           </svg>
         </div>
         <span class="app-title">To Doom</span>
-        <span id="app-version-badge" class="app-version">v1.2.5</span>
+        <span id="app-version-badge" class="app-version">v1.2.6</span>
       </div>
 
       <div class="titlebar-right">
@@ -211,6 +211,10 @@
         <div class="col-header">
           <h2 class="col-title">Виконано</h2>
           <span id="col-count-2" class="col-count">0</span>
+        </div>
+        <div id="dont-do-dropzone" class="dont-do-dropzone" title="Перетягніть картку сюди, щоб перемістити у Виконано зі статусом Don't Do">
+          <span class="dont-do-drop-icon">⊘</span>
+          <span>Перетягніть сюди для <strong>Don't Do</strong></span>
         </div>
         <div id="col-list-2" class="card-list" data-column="2"></div>
       </section>
@@ -429,6 +433,11 @@
           </div>
         </div>
 
+        <label class="checkbox-label dont-do-modal-check" style="margin-top: 12px;">
+          <input type="checkbox" id="chk-edit-task-dont-do" />
+          <span>⊘ Позначити як <strong style="color:#f87171;">Don't Do</strong> (відхилено / не актуально у «Виконано»)</span>
+        </label>
+
         <div class="modal-footer-actions" style="margin-top: 16px;">
           <button type="button" id="btn-delete-task-modal" class="btn-danger">У кошик</button>
           <button type="submit" class="btn-add">Зберегти</button>
@@ -437,6 +446,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=1.2.5"></script>
+  <script src="app.js?v=1.2.6"></script>
 </body>
 </html>

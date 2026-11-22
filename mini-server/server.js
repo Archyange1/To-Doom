@@ -8,7 +8,7 @@ const zlib = require('zlib');
 const { WebSocketServer, WebSocket } = require('ws');
 const QRCode = require('qrcode');
 
-const APP_VERSION = '1.2.5';
+const APP_VERSION = '1.2.6';
 const SEED_TIMESTAMP = 1700000000000;
 
 // Share data directory between D:\To Doom and project folder if available
@@ -412,6 +412,7 @@ function mergeOfflineState(incoming) {
         existing.progress = typeof incTask.progress === 'number' ? incTask.progress : existing.progress;
         existing.assignee = incTask.assignee || existing.assignee;
         existing.dotColor = incTask.dotColor || existing.dotColor;
+        existing.dontDo = Boolean(incTask.dontDo);
         existing.deleted = Boolean(incTask.deleted);
         existing.updatedAt = incTask.updatedAt;
         changed = true;
@@ -570,10 +571,15 @@ function applyAction(action, meta = {}) {
       const perm = checkMcpPermission(projectId, source);
       if (!perm.allowed) return { ok: false, error: perm.error };
 
-      const column = typeof payload.column === 'number' ? Math.max(0, Math.min(2, payload.column)) : 0;
-      const progress = typeof payload.progress === 'number'
-        ? Math.max(0, Math.min(100, Math.round(payload.progress)))
-        : (column === 2 ? 100 : 0);
+      const dontDo = Boolean(payload.dontDo ?? payload.dont_do);
+      const column = dontDo
+        ? 2
+        : (typeof payload.column === 'number' ? Math.max(0, Math.min(2, payload.column)) : 0);
+      const progress = dontDo
+        ? 100
+        : (typeof payload.progress === 'number'
+          ? Math.max(0, Math.min(100, Math.round(payload.progress)))
+          : (column === 2 ? 100 : 0));
       const assignee = (payload.assignee || 'Ви').trim();
       const epic = (payload.epic || '').trim();
       const colTasks = state.tasks.filter(t => t.projectId === projectId && !t.deleted && t.column === column);
@@ -585,6 +591,7 @@ function applyAction(action, meta = {}) {
         epic,
         column,
         progress,
+        dontDo,
         assignee,
         dotColor: payload.dotColor || getDotColorForAssignee(assignee),
         order: colTasks.length,
@@ -627,10 +634,21 @@ function applyAction(action, meta = {}) {
         task.assignee = payload.assignee.trim();
         task.dotColor = payload.dotColor || getDotColorForAssignee(task.assignee);
       }
+      const hasExplicitDontDo = typeof payload.dontDo === 'boolean' || typeof payload.dont_do === 'boolean';
+      if (hasExplicitDontDo) {
+        task.dontDo = Boolean(payload.dontDo ?? payload.dont_do);
+        if (task.dontDo && typeof payload.column !== 'number') {
+          task.column = 2;
+          task.progress = 100;
+        }
+      }
       if (typeof payload.column === 'number') {
         task.column = Math.max(0, Math.min(2, payload.column));
         if (task.column === 2 && typeof payload.progress !== 'number') {
           task.progress = 100;
+        }
+        if (task.column < 2 && !hasExplicitDontDo) {
+          task.dontDo = false;
         }
       }
       if (typeof payload.progress === 'number') {
