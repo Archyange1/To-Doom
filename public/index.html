@@ -8,14 +8,14 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="To Doom" />
   <meta name="theme-color" content="#0d0f12" />
-  <link rel="manifest" href="manifest.json?v=1.2.4" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=1.2.4" />
+  <link rel="manifest" href="manifest.json?v=1.2.5" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=1.2.5" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
-  <link rel="apple-touch-icon" href="apple-touch-icon.png?v=1.2.4" />
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=1.2.4" />
-  <link rel="apple-touch-icon-precomposed" sizes="180x180" href="apple-touch-icon.png?v=1.2.4" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png?v=1.2.5" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=1.2.5" />
+  <link rel="apple-touch-icon-precomposed" sizes="180x180" href="apple-touch-icon.png?v=1.2.5" />
   <title>To Doom</title>
-  <link rel="stylesheet" href="styles.css?v=1.2.4" />
+  <link rel="stylesheet" href="styles.css?v=1.2.5" />
 </head>
 <body>
   <!-- Вузький зелений язичок біля краю екрана (коли вікно сховане на Windows) -->
@@ -37,7 +37,7 @@
           </svg>
         </div>
         <span class="app-title">To Doom</span>
-        <span id="app-version-badge" class="app-version">v1.2.4</span>
+        <span id="app-version-badge" class="app-version">v1.2.5</span>
       </div>
 
       <div class="titlebar-right">
@@ -95,7 +95,11 @@
 
     <!-- Рядок вкладок проєктів та незалежного перемикача ШІ для проєкту -->
     <div class="projects-bar">
-      <div id="project-tabs" class="project-tabs"></div>
+      <div class="project-tabs-wrap" id="project-tabs-wrap">
+        <button type="button" id="btn-proj-scroll-left" class="proj-scroll-btn hidden" title="Прокрутити проєкти вліво" aria-label="Прокрутити проєкти вліво">‹</button>
+        <div id="project-tabs" class="project-tabs"></div>
+        <button type="button" id="btn-proj-scroll-right" class="proj-scroll-btn hidden" title="Прокрутити проєкти вправо" aria-label="Прокрутити проєкти вправо">›</button>
+      </div>
       <div class="projects-actions">
         <button id="btn-toggle-project-ai" class="ai-project-pill active" title="Дозволити або заборонити ШІ-агенту (MCP) керувати цим проєктом">
           <span class="ai-icon">🤖</span>
@@ -433,6 +437,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=1.2.4"></script>
+  <script src="app.js?v=1.2.5"></script>
 </body>
 </html>

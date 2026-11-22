@@ -1,5 +1,5 @@
 (() => {
-  const CLIENT_VERSION = '1.2.4';
+  const CLIENT_VERSION = '1.2.5';
   const isElectron = Boolean(window.electronAPI && window.electronAPI.isElectron);
   const isAndroidApk = location.protocol === 'file:' || Boolean(window.AndroidBridge);
   const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent) ||
@@ -150,6 +150,8 @@
   const btnClose = document.getElementById('btn-close');
 
   const projectTabsEl = document.getElementById('project-tabs');
+  const btnProjScrollLeft = document.getElementById('btn-proj-scroll-left');
+  const btnProjScrollRight = document.getElementById('btn-proj-scroll-right');
   const btnToggleProjectAi = document.getElementById('btn-toggle-project-ai');
   const aiProjectStatusText = document.getElementById('ai-project-status-text');
   const btnSettings = document.getElementById('btn-settings');
@@ -777,7 +779,124 @@
   }
 
   // Render Project Tabs & Active Project AI Toggle Pill
+  let lastRenderedActiveProjectId = null;
+  let suppressNextProjectTabClick = false;
+
+  function updateProjectTabsScrollUI() {
+    if (!projectTabsEl) return;
+    const maxScroll = Math.max(0, projectTabsEl.scrollWidth - projectTabsEl.clientWidth);
+    const hasOverflow = maxScroll > 2;
+    if (btnProjScrollLeft) {
+      btnProjScrollLeft.classList.toggle('hidden', !hasOverflow);
+      btnProjScrollLeft.disabled = projectTabsEl.scrollLeft <= 2;
+    }
+    if (btnProjScrollRight) {
+      btnProjScrollRight.classList.toggle('hidden', !hasOverflow);
+      btnProjScrollRight.disabled = projectTabsEl.scrollLeft >= maxScroll - 2;
+    }
+  }
+
+  function scrollActiveProjectTabIntoView(smooth = false) {
+    if (!projectTabsEl) return;
+    const activeTab = projectTabsEl.querySelector('.project-tab.active');
+    if (!activeTab) return;
+    const tabLeft = activeTab.offsetLeft;
+    const tabRight = tabLeft + activeTab.offsetWidth;
+    const viewLeft = projectTabsEl.scrollLeft;
+    const viewRight = viewLeft + projectTabsEl.clientWidth;
+    let targetScroll = null;
+
+    if (tabLeft < viewLeft + 8) {
+      targetScroll = Math.max(0, tabLeft - 12);
+    } else if (tabRight > viewRight - 8) {
+      targetScroll = Math.max(0, tabRight - projectTabsEl.clientWidth + 12);
+    }
+
+    if (targetScroll !== null) {
+      if (smooth && typeof projectTabsEl.scrollTo === 'function') {
+        projectTabsEl.scrollTo({ left: targetScroll, behavior: 'smooth' });
+      } else {
+        projectTabsEl.scrollLeft = targetScroll;
+      }
+    }
+  }
+
+  if (projectTabsEl) {
+    projectTabsEl.addEventListener('wheel', (e) => {
+      if (projectTabsEl.scrollWidth <= projectTabsEl.clientWidth) return;
+      const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      if (delta !== 0) {
+        e.preventDefault();
+        projectTabsEl.scrollLeft += delta;
+        updateProjectTabsScrollUI();
+      }
+    }, { passive: false });
+
+    projectTabsEl.addEventListener('scroll', () => {
+      updateProjectTabsScrollUI();
+    }, { passive: true });
+
+    let isDraggingTabs = false;
+    let tabsDragStartX = 0;
+    let tabsDragStartScroll = 0;
+    let tabsDragMoved = false;
+
+    projectTabsEl.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      if (projectTabsEl.scrollWidth <= projectTabsEl.clientWidth) return;
+      isDraggingTabs = true;
+      tabsDragMoved = false;
+      tabsDragStartX = e.clientX;
+      tabsDragStartScroll = projectTabsEl.scrollLeft;
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isDraggingTabs) return;
+      const dx = e.clientX - tabsDragStartX;
+      if (!tabsDragMoved && Math.abs(dx) > 5) {
+        tabsDragMoved = true;
+        suppressNextProjectTabClick = true;
+        projectTabsEl.classList.add('is-dragging');
+      }
+      if (tabsDragMoved) {
+        projectTabsEl.scrollLeft = tabsDragStartScroll - dx;
+        updateProjectTabsScrollUI();
+      }
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (!isDraggingTabs) return;
+      isDraggingTabs = false;
+      projectTabsEl.classList.remove('is-dragging');
+      if (tabsDragMoved) {
+        setTimeout(() => {
+          suppressNextProjectTabClick = false;
+        }, 80);
+      }
+    });
+  }
+
+  if (btnProjScrollLeft && projectTabsEl) {
+    btnProjScrollLeft.addEventListener('click', () => {
+      projectTabsEl.scrollBy({ left: -180, behavior: 'smooth' });
+    });
+  }
+
+  if (btnProjScrollRight && projectTabsEl) {
+    btnProjScrollRight.addEventListener('click', () => {
+      projectTabsEl.scrollBy({ left: 180, behavior: 'smooth' });
+    });
+  }
+
+  window.addEventListener('resize', () => {
+    updateProjectTabsScrollUI();
+  });
+
   function renderProjects() {
+    const prevScrollLeft = projectTabsEl ? projectTabsEl.scrollLeft : 0;
+    const activeChanged = lastRenderedActiveProjectId !== boardState.activeProjectId;
+    lastRenderedActiveProjectId = boardState.activeProjectId;
+
     projectTabsEl.innerHTML = '';
     const projects = boardState.projects || [];
     const activeProj = projects.find(p => p.id === boardState.activeProjectId) || projects[0];
@@ -817,6 +936,10 @@
       btn.appendChild(dotSpan);
 
       btn.addEventListener('click', () => {
+        if (suppressNextProjectTabClick) {
+          suppressNextProjectTabClick = false;
+          return;
+        }
         if (boardState.activeProjectId !== proj.id) {
           sendAction('SET_ACTIVE_PROJECT', { projectId: proj.id });
         }
@@ -827,6 +950,14 @@
       });
 
       projectTabsEl.appendChild(btn);
+    });
+
+    projectTabsEl.scrollLeft = prevScrollLeft;
+    requestAnimationFrame(() => {
+      if (activeChanged) {
+        scrollActiveProjectTabIntoView(false);
+      }
+      updateProjectTabsScrollUI();
     });
   }
 

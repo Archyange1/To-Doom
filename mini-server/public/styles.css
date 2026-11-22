@@ -223,19 +223,71 @@ body.web-tucked .tuck-tab {
   flex-shrink: 0;
 }
 
+.project-tabs-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
 .project-tabs {
   display: flex;
   align-items: center;
   gap: 8px;
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  overscroll-behavior-x: contain;
   flex: 1;
   min-width: 0;
+  cursor: grab;
+}
+
+.project-tabs.is-dragging {
+  cursor: grabbing;
+  scroll-behavior: auto;
+}
+
+.project-tabs.is-dragging .project-tab {
+  cursor: grabbing;
 }
 
 .project-tabs::-webkit-scrollbar {
   display: none;
+}
+
+.proj-scroll-btn {
+  width: 24px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid #232936;
+  background: #131720;
+  color: #cbd5e1;
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+  padding: 0 0 2px 0;
+}
+
+.proj-scroll-btn:hover:not(:disabled) {
+  background: #1a202c;
+  border-color: #333d4f;
+  color: #ffffff;
+}
+
+.proj-scroll-btn:disabled {
+  opacity: 0.28;
+  cursor: default;
 }
 
 .project-tab {
@@ -254,6 +306,7 @@ body.web-tucked .tuck-tab {
   white-space: nowrap;
   transition: all 0.15s ease;
   flex-shrink: 0;
+  touch-action: pan-x;
 }
 
 .project-tab:hover {
@@ -1329,6 +1382,12 @@ body.is-web.is-ios .tuck-tab {
     height: 29px;
     padding: 0 10px;
     font-size: 12px;
+  }
+
+  .proj-scroll-btn {
+    width: 22px;
+    height: 26px;
+    font-size: 15px;
   }
 
   .ai-project-pill {
