@@ -8,13 +8,15 @@ const zlib = require('zlib');
 const { WebSocketServer, WebSocket } = require('ws');
 const QRCode = require('qrcode');
 
-const APP_VERSION = '1.2.6';
+const APP_VERSION = '1.3.0';
 const SEED_TIMESTAMP = 1700000000000;
 
 // Share data directory between D:\To Doom and project folder if available
 const SHARED_DATA_DIR = 'D:\\To Doom\\data';
 const DATA_DIR = fs.existsSync('D:\\To Doom') ? SHARED_DATA_DIR : path.join(__dirname, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'board-state.json');
+const TG_CONFIG_FILE = path.join(DATA_DIR, 'telegram-config.json');
+const TG_MEDIA_DIR = path.join(DATA_DIR, 'tg-media');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const DEFAULT_PORT = parseInt(process.env.PORT || '3456', 10);
 const UDP_PORT = 3457;
@@ -23,6 +25,9 @@ const DEFAULT_TAILSCALE_SERVER = process.env.TODOOM_SERVER !== undefined ? proce
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
+if (!fs.existsSync(TG_MEDIA_DIR)) {
+  fs.mkdirSync(TG_MEDIA_DIR, { recursive: true });
+}
 
 function getInitialState() {
   return {
@@ -30,6 +35,7 @@ function getInitialState() {
     nextTaskId: 17,
     activeProjectId: 'proj-1',
     deletedProjects: {},
+    telegramItems: [],
     settings: {
       githubRepo: 'Archyange1/To-Doom',
       githubBranch: 'main',
@@ -167,6 +173,9 @@ function normalizeState(st) {
   }
   if (!st.deletedProjects || typeof st.deletedProjects !== 'object' || Array.isArray(st.deletedProjects)) {
     st.deletedProjects = {};
+  }
+  if (!Array.isArray(st.telegramItems)) {
+    st.telegramItems = [];
   }
   st.version = APP_VERSION;
   if (Array.isArray(st.projects)) {
@@ -417,6 +426,26 @@ function mergeOfflineState(incoming) {
         existing.updatedAt = incTask.updatedAt;
         changed = true;
       }
+    }
+  }
+
+  // 4. Merge Telegram inbox items by deterministic id + updatedAt
+  if (Array.isArray(incoming.telegramItems)) {
+    if (!Array.isArray(state.telegramItems)) state.telegramItems = [];
+    for (const incItem of incoming.telegramItems) {
+      if (!incItem || !incItem.id) continue;
+      const existing = state.telegramItems.find(x => x.id === incItem.id);
+      if (!existing) {
+        state.telegramItems.push({ ...incItem });
+        changed = true;
+      } else if ((incItem.updatedAt || 0) > (existing.updatedAt || 0)) {
+        Object.assign(existing, incItem);
+        changed = true;
+      }
+    }
+    if (state.telegramItems.length > 500) {
+      state.telegramItems.sort((a, b) => (b.date || 0) - (a.date || 0));
+      state.telegramItems = state.telegramItems.slice(0, 500);
     }
   }
 
@@ -711,6 +740,41 @@ function applyAction(action, meta = {}) {
       state.tasks = state.tasks.filter(t => !(t.deleted && (!projectId || t.projectId === projectId)));
       saveState(true);
       return { ok: true, state };
+    }
+
+    case 'SET_TG_ITEM_STATUS': {
+      if (!Array.isArray(state.telegramItems)) state.telegramItems = [];
+      const item = state.telegramItems.find(x => x.id === payload.id);
+      if (!item) return { ok: false, error: 'Елемент Telegram не знайдено' };
+      const allowed = new Set(['new', 'done', 'dont_do']);
+      const nextStatus = allowed.has(payload.status) ? payload.status : 'new';
+      item.status = nextStatus;
+      item.updatedAt = Date.now();
+      saveState(false);
+      broadcastState({ source, event: { type: 'tg_item_updated', item } });
+      return { ok: true, item, state };
+    }
+
+    case 'DELETE_TG_ITEM': {
+      if (!Array.isArray(state.telegramItems)) state.telegramItems = [];
+      const item = state.telegramItems.find(x => x.id === payload.id);
+      if (!item) return { ok: false, error: 'Елемент Telegram не знайдено' };
+      item.deleted = true;
+      item.updatedAt = Date.now();
+      saveState(false);
+      broadcastState({ source, event: { type: 'tg_item_deleted', id: item.id } });
+      return { ok: true, state };
+    }
+
+    case 'RESTORE_TG_ITEM': {
+      if (!Array.isArray(state.telegramItems)) state.telegramItems = [];
+      const item = state.telegramItems.find(x => x.id === payload.id);
+      if (!item) return { ok: false, error: 'Елемент Telegram не знайдено' };
+      item.deleted = false;
+      item.updatedAt = Date.now();
+      saveState(false);
+      broadcastState({ source, event: { type: 'tg_item_updated', item } });
+      return { ok: true, item, state };
     }
 
     default:
@@ -1304,8 +1368,468 @@ const MIME_TYPES = {
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.mp4': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.webm': 'video/webm',
+  '.mkv': 'video/x-matroska',
   '.ico': 'image/x-icon'
 };
+
+// =========================================================
+// TELEGRAM BOT INTEGRATION (LONG POLLING + MEDIA CACHE)
+// =========================================================
+let tgConfig = {
+  botToken: '',
+  enabled: false,
+  allowedChatId: '',
+  lastUpdateId: 0,
+  botUsername: '',
+  lastChatTitle: '',
+  lastChatId: '',
+  lastError: null
+};
+let tgPollActive = false;
+let tgPollTimer = null;
+let tgPollReq = null;
+
+function loadTelegramConfig() {
+  try {
+    if (fs.existsSync(TG_CONFIG_FILE)) {
+      const parsed = JSON.parse(fs.readFileSync(TG_CONFIG_FILE, 'utf8'));
+      if (parsed && typeof parsed === 'object') {
+        tgConfig = { ...tgConfig, ...parsed };
+      }
+    }
+  } catch (_) {}
+}
+
+function saveTelegramConfig() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(TG_CONFIG_FILE, JSON.stringify(tgConfig, null, 2), 'utf8');
+  } catch (_) {}
+}
+
+loadTelegramConfig();
+
+function maskToken(token) {
+  const s = String(token || '').trim();
+  if (!s) return '';
+  if (s.length <= 12) return '••••••';
+  return `${s.slice(0, 8)}...${s.slice(-6)}`;
+}
+
+function getSafeTelegramStatus() {
+  return {
+    hasToken: Boolean(tgConfig.botToken && tgConfig.botToken.trim()),
+    maskedToken: maskToken(tgConfig.botToken),
+    enabled: Boolean(tgConfig.enabled),
+    allowedChatId: tgConfig.allowedChatId || '',
+    botUsername: tgConfig.botUsername || '',
+    lastChatTitle: tgConfig.lastChatTitle || '',
+    lastChatId: tgConfig.lastChatId || '',
+    lastError: tgConfig.lastError || null,
+    pollingActive: tgPollActive
+  };
+}
+
+function tgApiRequest(token, method, query = '', timeoutMs = 15000) {
+  return new Promise((resolve) => {
+    const cleanToken = String(token || '').trim();
+    if (!cleanToken) {
+      resolve({ ok: false, error_code: 400, description: 'Не вказано токен бота' });
+      return;
+    }
+    const reqPath = `/bot${encodeURIComponent(cleanToken)}/${method}${query ? `?${query}` : ''}`;
+    const req = https.get({
+      hostname: 'api.telegram.org',
+      path: reqPath,
+      family: 4,
+      timeout: timeoutMs
+    }, (res) => {
+      let body = '';
+      res.on('data', chunk => { body += chunk; });
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(body);
+          resolve(parsed);
+        } catch (_) {
+          resolve({ ok: false, error_code: res.statusCode || 500, description: `Invalid JSON (HTTP ${res.statusCode})` });
+        }
+      });
+    });
+    tgPollReq = method === 'getUpdates' ? req : tgPollReq;
+    req.on('error', (err) => resolve({ ok: false, error_code: 0, description: err.message }));
+    req.on('timeout', () => {
+      try { req.destroy(); } catch (_) {}
+      resolve({ ok: false, error_code: 408, description: 'timeout' });
+    });
+  });
+}
+
+function downloadTelegramFile(token, fileId, prefix = 'media') {
+  return new Promise(async (resolve) => {
+    try {
+      const info = await tgApiRequest(token, 'getFile', `file_id=${encodeURIComponent(fileId)}`, 12000);
+      if (!info || !info.ok || !info.result || !info.result.file_path) {
+        resolve(null);
+        return;
+      }
+      if (info.result.file_size && info.result.file_size > 20 * 1024 * 1024) {
+        resolve({ tooLarge: true, fileSize: info.result.file_size });
+        return;
+      }
+      const remotePath = info.result.file_path;
+      const ext = path.extname(remotePath).toLowerCase() || '.bin';
+      const safeName = `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}${ext}`;
+      const localPath = path.join(TG_MEDIA_DIR, safeName);
+      if (!fs.existsSync(TG_MEDIA_DIR)) fs.mkdirSync(TG_MEDIA_DIR, { recursive: true });
+
+      const cleanToken = String(token || '').trim();
+      const fileReq = https.get({
+        hostname: 'api.telegram.org',
+        path: `/file/bot${encodeURIComponent(cleanToken)}/${remotePath}`,
+        family: 4,
+        timeout: 30000
+      }, (res) => {
+        if (res.statusCode !== 200) {
+          res.resume();
+          resolve(null);
+          return;
+        }
+        const out = fs.createWriteStream(localPath);
+        res.pipe(out);
+        out.on('finish', () => {
+          out.close(() => resolve({ fileUrl: `/tg-media/${safeName}`, fileSize: info.result.file_size || 0 }));
+        });
+        out.on('error', () => {
+          try { fs.unlinkSync(localPath); } catch (_) {}
+          resolve(null);
+        });
+      });
+      fileReq.on('error', () => resolve(null));
+      fileReq.on('timeout', () => {
+        try { fileReq.destroy(); } catch (_) {}
+        resolve(null);
+      });
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
+function extractUrlsFromMessage(msg) {
+  const found = [];
+  const seen = new Set();
+  const addUrl = (u) => {
+    if (!u) return;
+    let url = String(u).trim();
+    if (!/^https?:\/\//i.test(url)) {
+      if (/^[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(url)) url = 'https://' + url;
+      else return;
+    }
+    url = url.replace(/[),.;!?]+$/, '');
+    if (!seen.has(url)) {
+      seen.add(url);
+      found.push(url);
+    }
+  };
+
+  const text = msg.text || msg.caption || '';
+  const entities = msg.entities || msg.caption_entities || [];
+  for (const ent of entities) {
+    if (ent.type === 'text_link' && ent.url) {
+      addUrl(ent.url);
+    } else if (ent.type === 'url' && typeof ent.offset === 'number' && typeof ent.length === 'number') {
+      addUrl(text.slice(ent.offset, ent.offset + ent.length));
+    }
+  }
+  const regex = /https?:\/\/[^\s<>"']+/gi;
+  let m;
+  while ((m = regex.exec(text)) !== null) {
+    addUrl(m[0]);
+  }
+  return found;
+}
+
+function detectTelegramSourceType(msg, urls, hasForward) {
+  const allUrls = urls.join(' ').toLowerCase();
+  if (allUrls.includes('tiktok.com') || allUrls.includes('vm.tiktok.com') || allUrls.includes('vt.tiktok.com')) return 'tiktok';
+  if (allUrls.includes('youtube.com') || allUrls.includes('youtu.be')) return 'youtube';
+  if (msg.video || msg.video_note || (msg.document && (msg.document.mime_type || '').startsWith('video/'))) return 'video';
+  if (msg.photo || (msg.document && (msg.document.mime_type || '').startsWith('image/'))) return 'photo';
+  if (hasForward || allUrls.includes('t.me/')) return 'telegram';
+  if (urls.length > 0) return 'web';
+  return 'note';
+}
+
+function buildTelegramMessageUrl(chat, messageId) {
+  if (!chat || !messageId) return '';
+  if (chat.username) {
+    return `https://t.me/${chat.username}/${messageId}`;
+  }
+  const cid = String(chat.id || '');
+  if (cid.startsWith('-100')) {
+    return `https://t.me/c/${cid.slice(4)}/${messageId}`;
+  }
+  return '';
+}
+
+async function processTelegramUpdate(update) {
+  const msg = update.message || update.channel_post;
+  if (!msg || !msg.chat) return false;
+
+  const chatIdStr = String(msg.chat.id);
+  const chatTitle = msg.chat.title || msg.chat.username || [msg.chat.first_name, msg.chat.last_name].filter(Boolean).join(' ') || 'Telegram';
+
+  // Ignore pure service messages without content
+  const text = (msg.text || msg.caption || '').trim();
+  const hasPhoto = Array.isArray(msg.photo) && msg.photo.length > 0;
+  const hasVideo = Boolean(msg.video || msg.video_note);
+  const hasDoc = Boolean(msg.document);
+  if (!text && !hasPhoto && !hasVideo && !hasDoc) return false;
+
+  // Remember latest chat seen by bot so user can lock it in Settings
+  if (tgConfig.lastChatId !== chatIdStr || tgConfig.lastChatTitle !== chatTitle) {
+    tgConfig.lastChatId = chatIdStr;
+    tgConfig.lastChatTitle = chatTitle;
+    saveTelegramConfig();
+  }
+
+  // Filter by allowedChatId if configured
+  const allowed = String(tgConfig.allowedChatId || '').trim();
+  if (allowed && allowed !== chatIdStr) {
+    return false;
+  }
+
+  const itemId = `tg-${chatIdStr}-${msg.message_id}`;
+  if (!Array.isArray(state.telegramItems)) state.telegramItems = [];
+  if (state.telegramItems.some(x => x.id === itemId)) return false;
+
+  const urls = extractUrlsFromMessage(msg);
+
+  // Extract forward origin (Bot API 7+ forward_origin or legacy forward_from_chat)
+  let forwardFrom = '';
+  let forwardUrl = '';
+  if (msg.forward_origin) {
+    const fo = msg.forward_origin;
+    if (fo.type === 'channel' && fo.chat) {
+      forwardFrom = fo.chat.title || fo.chat.username || '';
+      if (fo.chat.username && fo.message_id) {
+        forwardUrl = `https://t.me/${fo.chat.username}/${fo.message_id}`;
+      }
+    } else if (fo.type === 'chat' && fo.sender_chat) {
+      forwardFrom = fo.sender_chat.title || '';
+    } else if (fo.type === 'user' && fo.sender_user) {
+      forwardFrom = [fo.sender_user.first_name, fo.sender_user.last_name].filter(Boolean).join(' ');
+    } else if (fo.type === 'hidden_user' && fo.sender_user_name) {
+      forwardFrom = fo.sender_user_name;
+    }
+  } else if (msg.forward_from_chat) {
+    forwardFrom = msg.forward_from_chat.title || msg.forward_from_chat.username || '';
+    if (msg.forward_from_chat.username && msg.forward_from_message_id) {
+      forwardUrl = `https://t.me/${msg.forward_from_chat.username}/${msg.forward_from_message_id}`;
+    }
+  }
+
+  let media = null;
+  const token = tgConfig.botToken;
+  if (hasPhoto) {
+    const best = msg.photo[msg.photo.length - 1];
+    const dl = await downloadTelegramFile(token, best.file_id, 'photo');
+    if (dl && dl.fileUrl) {
+      media = { kind: 'photo', fileUrl: dl.fileUrl, fileSize: dl.fileSize || best.file_size || 0, tooLarge: false };
+    }
+  } else if (hasVideo) {
+    const vid = msg.video || msg.video_note;
+    const fileSize = vid.file_size || 0;
+    let thumbUrl = '';
+    const thumbObj = vid.thumbnail || vid.thumb;
+    if (thumbObj && thumbObj.file_id) {
+      const tdl = await downloadTelegramFile(token, thumbObj.file_id, 'thumb');
+      if (tdl && tdl.fileUrl) thumbUrl = tdl.fileUrl;
+    }
+    if (fileSize > 20 * 1024 * 1024) {
+      media = {
+        kind: 'video',
+        fileUrl: '',
+        thumbUrl,
+        duration: vid.duration || 0,
+        fileSize,
+        fileName: vid.file_name || '',
+        tooLarge: true
+      };
+    } else {
+      const dl = await downloadTelegramFile(token, vid.file_id, 'video');
+      media = {
+        kind: 'video',
+        fileUrl: (dl && dl.fileUrl) || '',
+        thumbUrl,
+        duration: vid.duration || 0,
+        fileSize,
+        fileName: vid.file_name || '',
+        tooLarge: Boolean(dl && dl.tooLarge)
+      };
+    }
+  } else if (hasDoc) {
+    const doc = msg.document;
+    const mime = (doc.mime_type || '').toLowerCase();
+    const isImg = mime.startsWith('image/');
+    const isVid = mime.startsWith('video/');
+    if (isImg || isVid) {
+      const fileSize = doc.file_size || 0;
+      let thumbUrl = '';
+      const thumbObj = doc.thumbnail || doc.thumb;
+      if (thumbObj && thumbObj.file_id) {
+        const tdl = await downloadTelegramFile(token, thumbObj.file_id, 'thumb');
+        if (tdl && tdl.fileUrl) thumbUrl = tdl.fileUrl;
+      }
+      if (fileSize <= 20 * 1024 * 1024) {
+        const dl = await downloadTelegramFile(token, doc.file_id, isImg ? 'photo' : 'video');
+        media = {
+          kind: isImg ? 'photo' : 'video',
+          fileUrl: (dl && dl.fileUrl) || '',
+          thumbUrl,
+          fileName: doc.file_name || '',
+          fileSize,
+          tooLarge: false
+        };
+      } else {
+        media = {
+          kind: isImg ? 'photo' : 'video',
+          fileUrl: '',
+          thumbUrl,
+          fileName: doc.file_name || '',
+          fileSize,
+          tooLarge: true
+        };
+      }
+    }
+  }
+
+  const sourceType = detectTelegramSourceType(msg, urls, Boolean(forwardFrom));
+  const newItem = {
+    id: itemId,
+    chatId: chatIdStr,
+    chatTitle,
+    messageId: msg.message_id,
+    date: (msg.date || Math.floor(Date.now() / 1000)) * 1000,
+    text,
+    urls,
+    sourceType,
+    forwardFrom,
+    forwardUrl,
+    tgMessageUrl: buildTelegramMessageUrl(msg.chat, msg.message_id),
+    media,
+    status: 'new',
+    deleted: false,
+    updatedAt: Date.now()
+  };
+
+  state.telegramItems.unshift(newItem);
+  if (state.telegramItems.length > 500) {
+    state.telegramItems = state.telegramItems.slice(0, 500);
+  }
+  saveState(false);
+  broadcastState({
+    source: 'telegram',
+    event: { type: 'tg_item_created', item: newItem }
+  });
+  return true;
+}
+
+async function pollTelegramOnce(pollTimeoutSec = 25) {
+  if (!tgConfig.enabled || !tgConfig.botToken) return { ok: false, skipped: true };
+
+  if (!tgConfig.botUsername) {
+    const me = await tgApiRequest(tgConfig.botToken, 'getMe', '', 10000);
+    if (me && me.ok && me.result && me.result.username) {
+      tgConfig.botUsername = me.result.username;
+      tgConfig.lastError = null;
+      saveTelegramConfig();
+    } else if (me && me.error_code === 429) {
+      const waitSec = (me.parameters && me.parameters.retry_after) ? Number(me.parameters.retry_after) : 30;
+      tgConfig.lastError = `Ліміт Telegram (повтор через ${waitSec}с)`;
+      return { ok: false, retryAfterMs: (waitSec + 1) * 1000 };
+    }
+  }
+
+  const offset = (Number(tgConfig.lastUpdateId) || 0) + 1;
+  const query = `offset=${offset}&timeout=${pollTimeoutSec}&allowed_updates=${encodeURIComponent(JSON.stringify(['message', 'channel_post']))}`;
+  const resp = await tgApiRequest(tgConfig.botToken, 'getUpdates', query, (pollTimeoutSec + 12) * 1000);
+
+  if (!resp || !resp.ok) {
+    if (resp && resp.error_code === 429) {
+      const waitSec = (resp.parameters && resp.parameters.retry_after) ? Number(resp.parameters.retry_after) : 30;
+      tgConfig.lastError = `Telegram 429: пауза ${waitSec}с`;
+      return { ok: false, retryAfterMs: (waitSec + 1) * 1000 };
+    }
+    if (resp && resp.error_code === 409) {
+      tgConfig.lastError = 'Бот вже слухається на іншому пристрої (409 Conflict)';
+      return { ok: false, retryAfterMs: 18000 };
+    }
+    if (resp && resp.error_code === 401) {
+      tgConfig.lastError = 'Невірний токен бота (401)';
+      return { ok: false, retryAfterMs: 30000 };
+    }
+    if (resp && resp.description !== 'timeout') {
+      tgConfig.lastError = resp.description || 'Помилка зв\'язку з Telegram';
+    }
+    return { ok: false, retryAfterMs: 5000 };
+  }
+
+  if (tgConfig.lastError) {
+    tgConfig.lastError = null;
+  }
+
+  let added = 0;
+  const updates = Array.isArray(resp.result) ? resp.result : [];
+  for (const upd of updates) {
+    if (typeof upd.update_id === 'number' && upd.update_id > (tgConfig.lastUpdateId || 0)) {
+      tgConfig.lastUpdateId = upd.update_id;
+    }
+    try {
+      const ok = await processTelegramUpdate(upd);
+      if (ok) added++;
+    } catch (_) {}
+  }
+  if (updates.length > 0) {
+    saveTelegramConfig();
+  }
+  return { ok: true, added, retryAfterMs: 800 };
+}
+
+function stopTelegramPolling() {
+  tgPollActive = false;
+  if (tgPollTimer) {
+    clearTimeout(tgPollTimer);
+    tgPollTimer = null;
+  }
+  if (tgPollReq) {
+    try { tgPollReq.destroy(); } catch (_) {}
+    tgPollReq = null;
+  }
+}
+
+function startTelegramPolling() {
+  stopTelegramPolling();
+  if (!tgConfig.enabled || !tgConfig.botToken) return;
+  tgPollActive = true;
+
+  const loop = async () => {
+    if (!tgPollActive) return;
+    const res = await pollTelegramOnce(25);
+    if (!tgPollActive) return;
+    const delay = (res && res.retryAfterMs) ? res.retryAfterMs : 1500;
+    tgPollTimer = setTimeout(loop, delay);
+  };
+
+  tgPollTimer = setTimeout(loop, 1200);
+}
 
 function parseBody(req) {
   return new Promise((resolve) => {
@@ -1462,6 +1986,65 @@ async function handleApi(req, res) {
     return;
   }
 
+  if (pathname === '/api/telegram/config' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ ok: true, config: getSafeTelegramStatus() }));
+    return;
+  }
+
+  if (pathname === '/api/telegram/config' && req.method === 'POST') {
+    const body = await parseBody(req);
+    let tokenChanged = false;
+    if (typeof body.botToken === 'string' && body.botToken.trim()) {
+      const nextTok = body.botToken.trim();
+      if (nextTok !== tgConfig.botToken) {
+        tgConfig.botToken = nextTok;
+        tgConfig.botUsername = '';
+        tgConfig.lastUpdateId = 0;
+        tokenChanged = true;
+      }
+    }
+    if (typeof body.enabled === 'boolean') {
+      tgConfig.enabled = body.enabled;
+    }
+    if (typeof body.allowedChatId === 'string') {
+      tgConfig.allowedChatId = body.allowedChatId.trim();
+    }
+    tgConfig.lastError = null;
+    if (tokenChanged && tgConfig.botToken) {
+      const me = await tgApiRequest(tgConfig.botToken, 'getMe', '', 8000);
+      if (me && me.ok && me.result) {
+        tgConfig.botUsername = me.result.username || '';
+      } else if (me && me.description) {
+        tgConfig.lastError = me.description;
+      }
+    }
+    saveTelegramConfig();
+    if (tgConfig.enabled && tgConfig.botToken) {
+      startTelegramPolling();
+    } else {
+      stopTelegramPolling();
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ ok: true, config: getSafeTelegramStatus() }));
+    return;
+  }
+
+  if (pathname === '/api/telegram/sync-now' && req.method === 'POST') {
+    if (!tgConfig.botToken) {
+      res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: false, error: 'Спочатку збережіть токен Telegram-бота в Налаштуваннях' }));
+      return;
+    }
+    const prevEnabled = tgConfig.enabled;
+    tgConfig.enabled = true;
+    const result = await pollTelegramOnce(2);
+    tgConfig.enabled = prevEnabled;
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ ok: Boolean(result.ok), added: result.added || 0, config: getSafeTelegramStatus() }));
+    return;
+  }
+
   res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify({ ok: false, error: 'Маршрут не знайдено' }));
 }
@@ -1502,6 +2085,45 @@ function startServer(port = DEFAULT_PORT) {
       }
 
       const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+
+      // Serve cached Telegram media (photos, thumbnails, videos <= 20MB with Range support)
+      if (urlObj.pathname.startsWith('/tg-media/')) {
+        const mediaName = path.basename(decodeURIComponent(urlObj.pathname.slice('/tg-media/'.length)));
+        const mediaPath = path.join(TG_MEDIA_DIR, mediaName);
+        if (!mediaPath.startsWith(TG_MEDIA_DIR) || !fs.existsSync(mediaPath)) {
+          res.writeHead(404);
+          res.end('Not found');
+          return;
+        }
+        const stat = fs.statSync(mediaPath);
+        const ext = path.extname(mediaPath).toLowerCase();
+        const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+        const range = req.headers.range;
+        if (range) {
+          const parts = range.replace(/bytes=/, '').split('-');
+          const start = parseInt(parts[0], 10);
+          const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+          const chunkSize = (end - start) + 1;
+          res.writeHead(206, {
+            'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+            'Accept-Ranges': 'bytes',
+            'Content-Length': chunkSize,
+            'Content-Type': contentType,
+            'Cache-Control': 'public, max-age=604800'
+          });
+          fs.createReadStream(mediaPath, { start, end }).pipe(res);
+        } else {
+          res.writeHead(200, {
+            'Content-Length': stat.size,
+            'Content-Type': contentType,
+            'Accept-Ranges': 'bytes',
+            'Cache-Control': 'public, max-age=604800'
+          });
+          fs.createReadStream(mediaPath).pipe(res);
+        }
+        return;
+      }
+
       let reqPath = urlObj.pathname === '/' ? '/index.html' : urlObj.pathname;
       const lowerReqPath = reqPath.toLowerCase();
       if (APPLE_ICON_ALIASES.has(lowerReqPath)) {
@@ -1655,6 +2277,7 @@ function startServer(port = DEFAULT_PORT) {
       if (!hostLower.includes('liakh-server') && !myAddrs.has('100.101.231.78') && DEFAULT_TAILSCALE_SERVER) {
         connectToPeerServer(DEFAULT_TAILSCALE_SERVER, true);
       }
+      startTelegramPolling();
       resolve({ server, port: activeServerPort, reused: false });
     });
   });
@@ -1710,6 +2333,7 @@ if (require.main === module) {
 }
 
 function closeServer() {
+  stopTelegramPolling();
   try { if (activePingTimer) clearInterval(activePingTimer); } catch (_) {}
   try { if (outboundReconnectTimer) clearTimeout(outboundReconnectTimer); } catch (_) {}
   try { if (outboundPeerWs) outboundPeerWs.close(); } catch (_) {}

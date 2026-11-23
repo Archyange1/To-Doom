@@ -8,14 +8,14 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="To Doom" />
   <meta name="theme-color" content="#0d0f12" />
-  <link rel="manifest" href="manifest.json?v=1.2.6" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=1.2.6" />
+  <link rel="manifest" href="manifest.json?v=1.3.0" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=1.3.0" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
-  <link rel="apple-touch-icon" href="apple-touch-icon.png?v=1.2.6" />
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=1.2.6" />
-  <link rel="apple-touch-icon-precomposed" sizes="180x180" href="apple-touch-icon.png?v=1.2.6" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png?v=1.3.0" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=1.3.0" />
+  <link rel="apple-touch-icon-precomposed" sizes="180x180" href="apple-touch-icon.png?v=1.3.0" />
   <title>To Doom</title>
-  <link rel="stylesheet" href="styles.css?v=1.2.6" />
+  <link rel="stylesheet" href="styles.css?v=1.3.0" />
 </head>
 <body>
   <!-- Вузький зелений язичок біля краю екрана (коли вікно сховане на Windows) -->
@@ -37,7 +37,16 @@
           </svg>
         </div>
         <span class="app-title">To Doom</span>
-        <span id="app-version-badge" class="app-version">v1.2.6</span>
+        <span id="app-version-badge" class="app-version">v1.3.0</span>
+        <div class="app-mode-switcher" id="app-mode-switcher">
+          <button type="button" id="btn-mode-planner" class="mode-tab-btn active" title="Планувальник задач (Канбан)">
+            <span>Задачі</span>
+          </button>
+          <button type="button" id="btn-mode-telegram" class="mode-tab-btn" title="Окреме вікно Telegram-вхідних (посилання, пости, скріни, відео)">
+            <span>✈ Telegram</span>
+            <span id="tg-unread-badge" class="tg-unread-badge hidden">0</span>
+          </button>
+        </div>
       </div>
 
       <div class="titlebar-right">
@@ -93,6 +102,8 @@
       </div>
     </header>
 
+    <!-- Вкладка 1: Планувальник задач -->
+    <div id="planner-view" class="planner-view">
     <!-- Рядок вкладок проєктів та незалежного перемикача ШІ для проєкту -->
     <div class="projects-bar">
       <div class="project-tabs-wrap" id="project-tabs-wrap">
@@ -219,6 +230,36 @@
         <div id="col-list-2" class="card-list" data-column="2"></div>
       </section>
     </main>
+    </div>
+
+    <!-- Вкладка 2: Окреме вікно Telegram (посилання, TikTok, YouTube, пости, скріни, відео) -->
+    <section id="telegram-view" class="telegram-view hidden">
+      <div class="tg-toolbar">
+        <div class="tg-filter-pills" id="tg-filter-pills">
+          <button type="button" class="tg-filter-btn active" data-tg-filter="new">
+            Нові <span id="tg-count-new" class="tg-filter-count">0</span>
+          </button>
+          <button type="button" class="tg-filter-btn" data-tg-filter="done">
+            ✓ Переглянуто <span id="tg-count-done" class="tg-filter-count">0</span>
+          </button>
+          <button type="button" class="tg-filter-btn" data-tg-filter="dont_do">
+            ⊘ Don't Do <span id="tg-count-dont-do" class="tg-filter-count">0</span>
+          </button>
+          <button type="button" class="tg-filter-btn" data-tg-filter="all">
+            Усі <span id="tg-count-all" class="tg-filter-count">0</span>
+          </button>
+        </div>
+
+        <div class="tg-toolbar-right">
+          <input id="tg-search-input" type="text" class="tg-search-input" placeholder="Пошук посилань, постів..." />
+          <button type="button" id="btn-tg-sync-now" class="btn-secondary btn-sm" title="Перевірити нові повідомлення в Telegram зараз">↻ Оновити</button>
+          <button type="button" id="btn-tg-open-settings" class="btn-secondary btn-sm" title="Налаштування Telegram-бота">⚙ Бот</button>
+        </div>
+      </div>
+
+      <div id="tg-status-banner" class="tg-status-banner hidden"></div>
+      <div id="tg-items-list" class="tg-items-list"></div>
+    </section>
 
     <div id="toast-container" class="toast-container"></div>
   </div>
@@ -340,6 +381,34 @@
             <span>Windows-сповіщення на ПК, коли ШІ-агент додає або завершує задачу</span>
           </label>
         </div>
+
+        <hr class="modal-divider" />
+
+        <!-- 4. Інтеграція з Telegram-ботом -->
+        <div class="settings-section" id="settings-telegram-section">
+          <div class="section-title-row">
+            <span class="section-badge tg-badge">Telegram</span>
+            <strong>Стрічка посилань та медіа з Telegram</strong>
+          </div>
+          <p class="hint-text" style="margin-bottom: 8px;">
+            Додайте бота адміністратором у вашу Telegram-групу (або канал), і всі нові посилання, пости, скріншоти та відео автоматично з'являтимуться у вкладці <strong>✈ Telegram</strong>.
+          </p>
+          <div id="tg-config-status" class="update-status-box hidden" style="margin-bottom: 8px;"></div>
+          <label class="field-label">Токен бота (від @BotFather):</label>
+          <input id="input-tg-token" type="password" class="modal-input" placeholder="Залиште порожнім, щоб не змінювати збережений токен" autocomplete="off" />
+
+          <label class="field-label" style="margin-top: 8px;">ID групи/каналу (необов'язково — порожньо = усі чати бота):</label>
+          <input id="input-tg-chat-id" type="text" class="modal-input" placeholder="-1001234567890" />
+
+          <label class="checkbox-label" style="margin-top: 10px;">
+            <input type="checkbox" id="chk-tg-enabled" />
+            <span>Увімкнути опитування Telegram на цьому пристрої</span>
+          </label>
+
+          <div class="github-actions-row" style="margin-top: 10px;">
+            <button type="button" id="btn-save-tg-config" class="btn-add btn-sm">Зберегти Telegram</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -446,6 +515,14 @@
     </div>
   </div>
 
-  <script src="app.js?v=1.2.6"></script>
+  <!-- Модальне вікно: Перегляд скріншота на весь екран -->
+  <div id="modal-tg-lightbox" class="modal-backdrop hidden">
+    <div class="tg-lightbox-card">
+      <button type="button" class="icon-btn modal-close tg-lightbox-close" data-close="modal-tg-lightbox">✕</button>
+      <img id="tg-lightbox-img" class="tg-lightbox-img" src="" alt="Перегляд зображення" />
+    </div>
+  </div>
+
+  <script src="app.js?v=1.3.0"></script>
 </body>
 </html>

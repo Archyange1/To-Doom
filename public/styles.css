@@ -147,6 +147,437 @@ body.is-web .app-shell {
   font-weight: 500;
 }
 
+/* Перемикач вкладок: Планувальник задач / Telegram */
+.app-mode-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px;
+  margin-left: 8px;
+  border-radius: 9px;
+  background: #131720;
+  border: 1px solid #222836;
+  -webkit-app-region: no-drag;
+}
+
+.mode-tab-btn {
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.mode-tab-btn:hover {
+  color: #f1f5f9;
+}
+
+.mode-tab-btn.active {
+  background: #1f2633;
+  color: #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
+.tg-unread-badge {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #0ea5e9;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.planner-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Окреме вікно Telegram-вхідних */
+.telegram-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 18px 16px;
+  gap: 10px;
+}
+
+.tg-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.tg-filter-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tg-filter-btn {
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid #222836;
+  background: #12151c;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tg-filter-btn:hover {
+  background: #181d27;
+  color: #f1f5f9;
+}
+
+.tg-filter-btn.active {
+  background: #1c2230;
+  border-color: #364155;
+  color: #ffffff;
+}
+
+.tg-filter-count {
+  font-size: 10.5px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #cbd5e1;
+}
+
+.tg-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  justify-content: flex-end;
+  min-width: 220px;
+}
+
+.tg-search-input {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid #232937;
+  background: #12151b;
+  color: var(--text-main);
+  font-size: 12px;
+  width: 200px;
+  max-width: 100%;
+  outline: none;
+}
+
+.tg-search-input:focus {
+  border-color: #38bdf8;
+}
+
+.tg-status-banner {
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: rgba(14, 165, 233, 0.12);
+  border: 1px solid rgba(14, 165, 233, 0.35);
+  color: #bae6fd;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.tg-status-banner.error {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.38);
+  color: #fca5a5;
+}
+
+.tg-items-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 4px;
+}
+
+.tg-items-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.tg-items-list::-webkit-scrollbar-thumb {
+  background: #252b37;
+  border-radius: 999px;
+}
+
+.tg-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.tg-card.status-done {
+  border-color: rgba(34, 197, 94, 0.48);
+  background: linear-gradient(180deg, rgba(23, 27, 34, 0.98) 0%, rgba(16, 40, 26, 0.45) 100%);
+}
+
+.tg-card.status-dont-do {
+  border-color: rgba(239, 68, 68, 0.45);
+  background: linear-gradient(180deg, rgba(23, 27, 34, 0.98) 0%, rgba(42, 18, 22, 0.5) 100%);
+}
+
+.tg-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tg-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.tg-source-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  background: rgba(56, 189, 248, 0.14);
+  color: #7dd3fc;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+}
+
+.tg-source-badge.src-youtube {
+  background: rgba(239, 68, 68, 0.16);
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.38);
+}
+
+.tg-source-badge.src-tiktok {
+  background: rgba(236, 72, 153, 0.16);
+  color: #f9a8d4;
+  border-color: rgba(236, 72, 153, 0.38);
+}
+
+.tg-source-badge.src-photo,
+.tg-source-badge.src-video {
+  background: rgba(168, 85, 247, 0.16);
+  color: #d8b4fe;
+  border-color: rgba(168, 85, 247, 0.38);
+}
+
+.tg-card-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tg-card-text {
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: #f1f5f9;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.tg-card.status-dont-do .tg-card-text {
+  color: #94a3b8;
+  text-decoration: line-through;
+  text-decoration-color: rgba(248, 113, 113, 0.55);
+}
+
+.tg-card-text a {
+  color: #38bdf8;
+  text-decoration: underline;
+  word-break: break-all;
+}
+
+.tg-media-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tg-media-img {
+  max-width: 100%;
+  max-height: 300px;
+  width: auto;
+  align-self: flex-start;
+  border-radius: 9px;
+  border: 1px solid #262e3d;
+  cursor: zoom-in;
+  object-fit: contain;
+  background: #0b0d11;
+}
+
+.tg-media-video {
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: 9px;
+  border: 1px solid #262e3d;
+  background: #000;
+}
+
+.tg-media-large-note {
+  font-size: 11.5px;
+  color: #fbbf24;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tg-url-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tg-url-chip {
+  padding: 4px 10px;
+  border-radius: 7px;
+  border: 1px solid rgba(56, 189, 248, 0.32);
+  background: rgba(56, 189, 248, 0.1);
+  color: #7dd3fc;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.15s ease;
+}
+
+.tg-url-chip:hover {
+  background: rgba(56, 189, 248, 0.22);
+  color: #ffffff;
+}
+
+/* Нижній ряд статусів під кожним пунктом Telegram: зелений Прийнято/Переглянуто та червоний Don't Do */
+.tg-status-containers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.tg-status-btn {
+  padding: 7px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  transition: all 0.15s ease;
+}
+
+.tg-status-btn.tg-btn-done {
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  background: rgba(34, 197, 94, 0.08);
+  color: #86efac;
+}
+
+.tg-status-btn.tg-btn-done:hover {
+  background: rgba(34, 197, 94, 0.18);
+  border-color: rgba(34, 197, 94, 0.6);
+  color: #ffffff;
+}
+
+.tg-status-btn.tg-btn-done.active {
+  background: rgba(22, 163, 74, 0.32);
+  border-color: #22c55e;
+  color: #ffffff;
+  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.45);
+}
+
+.tg-status-btn.tg-btn-dont-do {
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.08);
+  color: #fca5a5;
+}
+
+.tg-status-btn.tg-btn-dont-do:hover {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(239, 68, 68, 0.6);
+  color: #ffffff;
+}
+
+.tg-status-btn.tg-btn-dont-do.active {
+  background: rgba(220, 38, 38, 0.32);
+  border-color: #ef4444;
+  color: #ffffff;
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.45);
+}
+
+.tg-badge {
+  background: rgba(14, 165, 233, 0.18) !important;
+  color: #7dd3fc !important;
+  border-color: rgba(14, 165, 233, 0.4) !important;
+}
+
+.tg-lightbox-card {
+  position: relative;
+  max-width: 92vw;
+  max-height: 90vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tg-lightbox-img {
+  max-width: 92vw;
+  max-height: 88vh;
+  border-radius: 12px;
+  border: 1px solid #2e3646;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.8);
+}
+
+.tg-lightbox-close {
+  position: absolute;
+  top: -12px;
+  right: -12px;
+  background: #141821 !important;
+  border-color: #333c4e !important;
+  color: #ffffff !important;
+}
+
 .titlebar-right {
   display: flex;
   align-items: center;
@@ -1465,6 +1896,38 @@ body.is-web.is-ios .tuck-tab {
 
   .app-title {
     font-size: 13.5px;
+  }
+
+  .app-version {
+    display: none;
+  }
+
+  .app-mode-switcher {
+    margin-left: 4px;
+  }
+
+  .mode-tab-btn {
+    padding: 0 8px;
+    font-size: 11px;
+  }
+
+  .telegram-view {
+    padding: 10px 14px 12px;
+  }
+
+  .tg-toolbar-right {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .tg-search-input {
+    flex: 1;
+    width: auto;
+    font-size: 16px !important;
+  }
+
+  .tg-status-containers {
+    grid-template-columns: 1fr;
   }
 
   body.is-web #btn-tuck,

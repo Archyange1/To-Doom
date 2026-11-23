@@ -1,5 +1,5 @@
 (() => {
-  const CLIENT_VERSION = '1.2.6';
+  const CLIENT_VERSION = '1.3.0';
   const isElectron = Boolean(window.electronAPI && window.electronAPI.isElectron);
   const isAndroidApk = location.protocol === 'file:' || Boolean(window.AndroidBridge);
   const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent) ||
@@ -67,6 +67,7 @@
       nextTaskId: 17,
       activeProjectId: 'proj-1',
       deletedProjects: {},
+      telegramItems: [],
       settings: {
         githubRepo: localStorage.getItem('todoom_github_repo') || 'Archyange1/To-Doom',
         githubBranch: localStorage.getItem('todoom_github_branch') || 'main'
@@ -443,6 +444,20 @@
       }
     } else if (type === 'EMPTY_TRASH') {
       boardState.tasks = boardState.tasks.filter(t => !(t.deleted && t.projectId === boardState.activeProjectId));
+    } else if (type === 'SET_TG_ITEM_STATUS') {
+      if (!Array.isArray(boardState.telegramItems)) boardState.telegramItems = [];
+      const item = boardState.telegramItems.find(x => x.id === payload.id);
+      if (item) {
+        item.status = payload.status || 'new';
+        item.updatedAt = Date.now();
+      }
+    } else if (type === 'DELETE_TG_ITEM') {
+      if (!Array.isArray(boardState.telegramItems)) boardState.telegramItems = [];
+      const item = boardState.telegramItems.find(x => x.id === payload.id);
+      if (item) {
+        item.deleted = true;
+        item.updatedAt = Date.now();
+      }
     }
     saveOfflineState(!isConnected);
     renderAll();
@@ -588,6 +603,9 @@
             if (msg.peers) peers = msg.peers;
             saveOfflineState(false);
             renderAll(msg.event);
+          }
+          if (msg.source === 'telegram' && msg.event && msg.event.type === 'tg_item_created') {
+            showToast('✈ Новий елемент із Telegram додано у стрічку');
           }
           if (msg.source === 'mcp' && msg.event && msg.event.task) {
             const t = msg.event.task;
@@ -1423,6 +1441,7 @@
     updateProgressSummary();
     renderBoard(lastEvent);
     renderPeersBadge();
+    renderTelegramView();
   }
 
   function openModal(id) {
@@ -2070,6 +2089,450 @@
 
   window.addEventListener('resize', updateProgressSummary);
 
+  // =========================================================
+  // TELEGRAM INBOX VIEW (Separate Tab + Green/Red Statuses)
+  // =========================================================
+  const plannerViewEl = document.getElementById('planner-view');
+  const telegramViewEl = document.getElementById('telegram-view');
+  const btnModePlanner = document.getElementById('btn-mode-planner');
+  const btnModeTelegram = document.getElementById('btn-mode-telegram');
+  const tgUnreadBadge = document.getElementById('tg-unread-badge');
+  const tgItemsListEl = document.getElementById('tg-items-list');
+  const tgSearchInput = document.getElementById('tg-search-input');
+  const tgStatusBanner = document.getElementById('tg-status-banner');
+  const btnTgSyncNow = document.getElementById('btn-tg-sync-now');
+  const btnTgOpenSettings = document.getElementById('btn-tg-open-settings');
+  const tgCountNewEl = document.getElementById('tg-count-new');
+  const tgCountDoneEl = document.getElementById('tg-count-done');
+  const tgCountDontDoEl = document.getElementById('tg-count-dont-do');
+  const tgCountAllEl = document.getElementById('tg-count-all');
+
+  const inputTgToken = document.getElementById('input-tg-token');
+  const inputTgChatId = document.getElementById('input-tg-chat-id');
+  const chkTgEnabled = document.getElementById('chk-tg-enabled');
+  const btnSaveTgConfig = document.getElementById('btn-save-tg-config');
+  const tgConfigStatusBox = document.getElementById('tg-config-status');
+  const tgLightboxImg = document.getElementById('tg-lightbox-img');
+
+  let activeAppMode = localStorage.getItem('todoom_app_mode') || 'planner';
+  let activeTgFilter = localStorage.getItem('todoom_tg_filter') || 'new';
+  let tgSearchQuery = '';
+  let cachedTgConfig = null;
+
+  function openExternalUrlSafe(url) {
+    if (!url) return;
+    if (isElectron && window.electronAPI && window.electronAPI.openExternal) {
+      window.electronAPI.openExternal(url);
+    } else {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+  }
+
+  function resolveMediaUrl(relPath) {
+    if (!relPath) return '';
+    if (relPath.startsWith('http://') || relPath.startsWith('https://')) return relPath;
+    const base = getApiBase();
+    return base ? `${base}${relPath}` : relPath;
+  }
+
+  function switchAppMode(mode) {
+    activeAppMode = mode === 'telegram' ? 'telegram' : 'planner';
+    try { localStorage.setItem('todoom_app_mode', activeAppMode); } catch (_) {}
+    if (plannerViewEl) plannerViewEl.classList.toggle('hidden', activeAppMode !== 'planner');
+    if (telegramViewEl) telegramViewEl.classList.toggle('hidden', activeAppMode !== 'telegram');
+    if (btnModePlanner) btnModePlanner.classList.toggle('active', activeAppMode === 'planner');
+    if (btnModeTelegram) btnModeTelegram.classList.toggle('active', activeAppMode === 'telegram');
+    if (activeAppMode === 'telegram') {
+      loadTelegramConfigUI();
+      renderTelegramView();
+    }
+  }
+
+  if (btnModePlanner) btnModePlanner.addEventListener('click', () => switchAppMode('planner'));
+  if (btnModeTelegram) btnModeTelegram.addEventListener('click', () => switchAppMode('telegram'));
+
+  document.querySelectorAll('.tg-filter-btn').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.tgFilter === activeTgFilter);
+    btn.addEventListener('click', () => {
+      activeTgFilter = btn.dataset.tgFilter || 'new';
+      try { localStorage.setItem('todoom_tg_filter', activeTgFilter); } catch (_) {}
+      document.querySelectorAll('.tg-filter-btn').forEach(b => b.classList.toggle('active', b === btn));
+      renderTelegramView();
+    });
+  });
+
+  if (tgSearchInput) {
+    tgSearchInput.addEventListener('input', () => {
+      tgSearchQuery = tgSearchInput.value.trim().toLowerCase();
+      renderTelegramView();
+    });
+  }
+
+  function formatTgDate(ts) {
+    if (!ts) return '';
+    try {
+      const d = new Date(ts);
+      return d.toLocaleString('uk-UA', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function getTgSourceMeta(sourceType) {
+    switch (sourceType) {
+      case 'youtube': return { label: '▶ YouTube', cls: 'src-youtube' };
+      case 'tiktok': return { label: '♪ TikTok', cls: 'src-tiktok' };
+      case 'photo': return { label: '🖼 Скріншот', cls: 'src-photo' };
+      case 'video': return { label: '🎥 Відео', cls: 'src-video' };
+      case 'telegram': return { label: '✈ Telegram-пост', cls: 'src-telegram' };
+      case 'web': return { label: '🌐 Сайт', cls: 'src-web' };
+      default: return { label: '📝 Нотатка', cls: 'src-note' };
+    }
+  }
+
+  function getUrlChipLabel(url) {
+    try {
+      const u = new URL(url);
+      const host = u.hostname.replace(/^www\./, '');
+      if (host.includes('tiktok.com')) return 'Відкрити TikTok ↗';
+      if (host.includes('youtube.com') || host.includes('youtu.be')) return 'Відкрити YouTube ↗';
+      if (host === 't.me') return 'Відкрити в Telegram ↗';
+      return `${host} ↗`;
+    } catch (_) {
+      return 'Відкрити посилання ↗';
+    }
+  }
+
+  function linkifySafe(text) {
+    const escaped = escapeHtml(text || '');
+    return escaped.replace(/(https?:\/\/[^\s<]+)/gi, (m) => {
+      return `<a href="${m}" data-ext-url="${m}">${m}</a>`;
+    });
+  }
+
+  function renderTelegramView() {
+    const allActive = (boardState.telegramItems || []).filter(x => x && !x.deleted);
+    const newCount = allActive.filter(x => (x.status || 'new') === 'new').length;
+    const doneCount = allActive.filter(x => x.status === 'done').length;
+    const dontDoCount = allActive.filter(x => x.status === 'dont_do').length;
+
+    if (tgUnreadBadge) {
+      tgUnreadBadge.textContent = String(newCount);
+      tgUnreadBadge.classList.toggle('hidden', newCount === 0);
+    }
+    if (tgCountNewEl) tgCountNewEl.textContent = String(newCount);
+    if (tgCountDoneEl) tgCountDoneEl.textContent = String(doneCount);
+    if (tgCountDontDoEl) tgCountDontDoEl.textContent = String(dontDoCount);
+    if (tgCountAllEl) tgCountAllEl.textContent = String(allActive.length);
+
+    if (!tgItemsListEl) return;
+
+    let filtered = allActive.filter((item) => {
+      const st = item.status || 'new';
+      if (activeTgFilter !== 'all' && st !== activeTgFilter) return false;
+      if (tgSearchQuery) {
+        const hay = `${item.text || ''} ${(item.urls || []).join(' ')} ${item.forwardFrom || ''} ${item.chatTitle || ''}`.toLowerCase();
+        if (!hay.includes(tgSearchQuery)) return false;
+      }
+      return true;
+    });
+
+    filtered.sort((a, b) => (b.date || 0) - (a.date || 0));
+
+    tgItemsListEl.innerHTML = '';
+    if (filtered.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'empty-col-placeholder';
+      empty.style.padding = '36px 16px';
+      empty.innerHTML = allActive.length === 0
+        ? 'Стрічка Telegram порожня.<br/>Додайте бота адміністратором у вашу Telegram-групу (або канал) і скиньте туди посилання, пост, скріншот або відео — воно з\'явиться тут автоматично.'
+        : 'За обраним фільтром елементів немає.';
+      tgItemsListEl.appendChild(empty);
+      return;
+    }
+
+    filtered.forEach((item) => {
+      const st = item.status || 'new';
+      const card = document.createElement('article');
+      card.className = 'tg-card' + (st === 'done' ? ' status-done' : (st === 'dont_do' ? ' status-dont-do' : ''));
+
+      const srcMeta = getTgSourceMeta(item.sourceType);
+      const header = document.createElement('div');
+      header.className = 'tg-card-header';
+
+      const meta = document.createElement('div');
+      meta.className = 'tg-card-meta';
+      const srcBadge = document.createElement('span');
+      srcBadge.className = `tg-source-badge ${srcMeta.cls}`;
+      srcBadge.textContent = srcMeta.label;
+      meta.appendChild(srcBadge);
+
+      if (item.forwardFrom) {
+        const fwd = document.createElement('span');
+        fwd.textContent = `↪ ${item.forwardFrom}`;
+        meta.appendChild(fwd);
+      } else if (item.chatTitle) {
+        const ch = document.createElement('span');
+        ch.textContent = item.chatTitle;
+        meta.appendChild(ch);
+      }
+
+      const dateSpan = document.createElement('span');
+      dateSpan.textContent = `· ${formatTgDate(item.date)}`;
+      meta.appendChild(dateSpan);
+
+      const headActions = document.createElement('div');
+      headActions.className = 'tg-card-head-actions';
+
+      const promoteBtn = document.createElement('button');
+      promoteBtn.type = 'button';
+      promoteBtn.className = 'card-action-btn';
+      promoteBtn.title = 'Створити задачу в активному проєкті з цього пункту';
+      promoteBtn.textContent = '→📋';
+      promoteBtn.style.width = 'auto';
+      promoteBtn.style.padding = '0 6px';
+      promoteBtn.addEventListener('click', () => {
+        const rawTitle = (item.text || (item.urls && item.urls[0]) || `${srcMeta.label} із Telegram`).replace(/\s+/g, ' ').trim();
+        const shortTitle = rawTitle.length > 140 ? rawTitle.slice(0, 137) + '...' : rawTitle;
+        sendAction('CREATE_TASK', {
+          projectId: boardState.activeProjectId,
+          title: shortTitle,
+          epic: 'Telegram',
+          column: 0,
+          progress: 0,
+          assignee: currentUserName
+        });
+        showToast('Додано задачу на дошку з Telegram');
+      });
+
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'card-action-btn del';
+      delBtn.title = 'Прибрати зі списку';
+      delBtn.textContent = '✕';
+      delBtn.addEventListener('click', () => {
+        sendAction('DELETE_TG_ITEM', { id: item.id });
+      });
+
+      headActions.appendChild(promoteBtn);
+      headActions.appendChild(delBtn);
+      header.appendChild(meta);
+      header.appendChild(headActions);
+      card.appendChild(header);
+
+      if (item.text) {
+        const textEl = document.createElement('div');
+        textEl.className = 'tg-card-text';
+        textEl.innerHTML = linkifySafe(item.text);
+        textEl.querySelectorAll('a[data-ext-url]').forEach((a) => {
+          a.addEventListener('click', (e) => {
+            e.preventDefault();
+            openExternalUrlSafe(a.dataset.extUrl);
+          });
+        });
+        card.appendChild(textEl);
+      }
+
+      if (item.media) {
+        const mediaWrap = document.createElement('div');
+        mediaWrap.className = 'tg-media-wrap';
+        if (item.media.kind === 'photo' && item.media.fileUrl) {
+          const img = document.createElement('img');
+          img.className = 'tg-media-img';
+          img.loading = 'lazy';
+          img.src = resolveMediaUrl(item.media.fileUrl);
+          img.alt = 'Скріншот із Telegram';
+          img.addEventListener('click', () => {
+            if (tgLightboxImg) {
+              tgLightboxImg.src = img.src;
+              openModal('modal-tg-lightbox');
+            }
+          });
+          mediaWrap.appendChild(img);
+        } else if (item.media.kind === 'video') {
+          if (item.media.fileUrl && !item.media.tooLarge) {
+            const vid = document.createElement('video');
+            vid.className = 'tg-media-video';
+            vid.controls = true;
+            vid.preload = 'metadata';
+            if (item.media.thumbUrl) vid.poster = resolveMediaUrl(item.media.thumbUrl);
+            vid.src = resolveMediaUrl(item.media.fileUrl);
+            mediaWrap.appendChild(vid);
+          } else {
+            if (item.media.thumbUrl) {
+              const img = document.createElement('img');
+              img.className = 'tg-media-img';
+              img.src = resolveMediaUrl(item.media.thumbUrl);
+              img.alt = 'Прев\'ю відео';
+              mediaWrap.appendChild(img);
+            }
+            const note = document.createElement('div');
+            note.className = 'tg-media-large-note';
+            const mb = item.media.fileSize ? `${(item.media.fileSize / (1024 * 1024)).toFixed(1)} МБ` : '> 20 МБ';
+            note.textContent = `🎥 Відео (${mb}) — перевищує ліміт 20 МБ Bot API, відкрийте оригінал у Telegram`;
+            mediaWrap.appendChild(note);
+          }
+        }
+        card.appendChild(mediaWrap);
+      }
+
+      const linksToShow = [...(item.urls || [])];
+      if (item.forwardUrl && !linksToShow.includes(item.forwardUrl)) linksToShow.push(item.forwardUrl);
+      if (item.tgMessageUrl && !linksToShow.includes(item.tgMessageUrl)) linksToShow.push(item.tgMessageUrl);
+
+      if (linksToShow.length > 0) {
+        const chips = document.createElement('div');
+        chips.className = 'tg-url-chips';
+        linksToShow.forEach((u) => {
+          const a = document.createElement('a');
+          a.className = 'tg-url-chip';
+          a.href = u;
+          a.textContent = getUrlChipLabel(u);
+          a.addEventListener('click', (e) => {
+            e.preventDefault();
+            openExternalUrlSafe(u);
+          });
+          chips.appendChild(a);
+        });
+        card.appendChild(chips);
+      }
+
+      const statusRow = document.createElement('div');
+      statusRow.className = 'tg-status-containers';
+
+      const doneBtn = document.createElement('button');
+      doneBtn.type = 'button';
+      doneBtn.className = 'tg-status-btn tg-btn-done' + (st === 'done' ? ' active' : '');
+      doneBtn.textContent = st === 'done' ? '✓ Прийнято / Переглянуто' : '✓ Прийняти / Переглянуто';
+      doneBtn.addEventListener('click', () => {
+        const nextStatus = st === 'done' ? 'new' : 'done';
+        sendAction('SET_TG_ITEM_STATUS', { id: item.id, status: nextStatus });
+      });
+
+      const dontDoBtn = document.createElement('button');
+      dontDoBtn.type = 'button';
+      dontDoBtn.className = 'tg-status-btn tg-btn-dont-do' + (st === 'dont_do' ? ' active' : '');
+      dontDoBtn.textContent = st === 'dont_do' ? '⊘ Don\'t Do (Відхилено)' : '⊘ Don\'t Do';
+      dontDoBtn.addEventListener('click', () => {
+        const nextStatus = st === 'dont_do' ? 'new' : 'dont_do';
+        sendAction('SET_TG_ITEM_STATUS', { id: item.id, status: nextStatus });
+      });
+
+      statusRow.appendChild(doneBtn);
+      statusRow.appendChild(dontDoBtn);
+      card.appendChild(statusRow);
+
+      tgItemsListEl.appendChild(card);
+    });
+  }
+
+  async function loadTelegramConfigUI() {
+    try {
+      const res = await fetch(`${getApiBase()}/api/telegram/config`);
+      const data = await res.json();
+      if (!data || !data.ok || !data.config) return;
+      cachedTgConfig = data.config;
+      const cfg = data.config;
+
+      if (inputTgChatId) inputTgChatId.value = cfg.allowedChatId || '';
+      if (chkTgEnabled) chkTgEnabled.checked = Boolean(cfg.enabled);
+
+      const statusParts = [];
+      if (cfg.hasToken) {
+        statusParts.push(`Токен: ${cfg.maskedToken}${cfg.botUsername ? ` (@${cfg.botUsername})` : ''}`);
+      } else {
+        statusParts.push('Токен не задано');
+      }
+      if (cfg.lastChatTitle) {
+        statusParts.push(`Останній чат: ${cfg.lastChatTitle} (${cfg.lastChatId})`);
+      }
+      statusParts.push(cfg.pollingActive ? '🟢 Слухає нові повідомлення' : '⚪ Пауза');
+
+      if (tgConfigStatusBox) {
+        tgConfigStatusBox.classList.remove('hidden');
+        tgConfigStatusBox.innerHTML = escapeHtml(statusParts.join(' · ')) +
+          (cfg.lastError ? `<br/><span style="color:#fca5a5">Увага: ${escapeHtml(cfg.lastError)}</span>` : '');
+      }
+
+      if (tgStatusBanner) {
+        if (cfg.lastError) {
+          tgStatusBanner.className = 'tg-status-banner error';
+          tgStatusBanner.textContent = `Telegram-бот: ${cfg.lastError}`;
+        } else if (!cfg.hasToken) {
+          tgStatusBanner.className = 'tg-status-banner';
+          tgStatusBanner.textContent = 'Telegram-бот ще не налаштований. Натисніть «⚙ Бот», щоб вставити токен.';
+        } else if (!cfg.enabled) {
+          tgStatusBanner.className = 'tg-status-banner';
+          tgStatusBanner.textContent = 'Опитування Telegram на цьому пристрої вимкнено (якщо працює міні-сервер, нові повідомлення все одно синхронізуються).';
+        } else {
+          tgStatusBanner.className = 'tg-status-banner hidden';
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (btnSaveTgConfig) {
+    btnSaveTgConfig.addEventListener('click', async () => {
+      try {
+        const res = await fetch(`${getApiBase()}/api/telegram/config`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            botToken: inputTgToken ? inputTgToken.value.trim() : '',
+            allowedChatId: inputTgChatId ? inputTgChatId.value.trim() : '',
+            enabled: chkTgEnabled ? Boolean(chkTgEnabled.checked) : true
+          })
+        });
+        const data = await res.json();
+        if (data && data.ok) {
+          if (inputTgToken) inputTgToken.value = '';
+          showToast('Налаштування Telegram збережено!');
+          loadTelegramConfigUI();
+        }
+      } catch (err) {
+        showToast(`Помилка збереження Telegram: ${err.message}`);
+      }
+    });
+  }
+
+  if (btnTgSyncNow) {
+    btnTgSyncNow.addEventListener('click', async () => {
+      btnTgSyncNow.disabled = true;
+      try {
+        const res = await fetch(`${getApiBase()}/api/telegram/sync-now`, { method: 'POST' });
+        const data = await res.json();
+        if (data && data.ok) {
+          showToast(data.added > 0 ? `✈ Завантажено нових елементів: ${data.added}` : 'Нових повідомлень у Telegram поки немає');
+        } else {
+          showToast((data && data.error) || (data && data.config && data.config.lastError) || 'Не вдалося оновити Telegram');
+        }
+        loadTelegramConfigUI();
+      } catch (err) {
+        showToast(`Помилка: ${err.message}`);
+      } finally {
+        btnTgSyncNow.disabled = false;
+      }
+    });
+  }
+
+  if (btnTgOpenSettings) {
+    btnTgOpenSettings.addEventListener('click', () => {
+      loadTelegramConfigUI();
+      openModal('modal-settings');
+      setTimeout(() => {
+        const sec = document.getElementById('settings-telegram-section');
+        if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 80);
+    });
+  }
+
+  if (btnSettings) {
+    btnSettings.addEventListener('click', () => {
+      loadTelegramConfigUI();
+    });
+  }
+
+  switchAppMode(activeAppMode);
   renderAll();
   connectWebSocket();
 })();
