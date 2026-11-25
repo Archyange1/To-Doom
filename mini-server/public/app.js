@@ -1,5 +1,5 @@
 (() => {
-  const CLIENT_VERSION = '1.3.1';
+  const CLIENT_VERSION = '1.3.2';
   const isElectron = Boolean(window.electronAPI && window.electronAPI.isElectron);
   const isAndroidApk = location.protocol === 'file:' || Boolean(window.AndroidBridge);
   const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent) ||
@@ -1170,7 +1170,7 @@
     const hasDesc = Boolean(task.description && String(task.description).trim());
     descBtn.className = 'card-action-btn desc-btn' + (hasDesc ? ' has-desc' : '');
     descBtn.title = hasDesc ? 'Переглянути / змінити опис задачі' : 'Додати детальний опис задачі';
-    descBtn.textContent = '📝';
+    descBtn.innerHTML = `<svg viewBox="0 0 18 18" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2.5h6l3 3v10a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1v-12a1 1 0 0 1 1-1z"/><line x1="6.5" y1="8.5" x2="11.5" y2="8.5"/><line x1="6.5" y1="11.5" x2="11.5" y2="11.5"/><line x1="6.5" y1="14" x2="9.5" y2="14"/></svg>`;
     descBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       openTaskDescriptionModal(task);
@@ -1250,7 +1250,7 @@
       descChip.type = 'button';
       descChip.className = 'task-desc-chip';
       descChip.title = String(task.description).trim().slice(0, 180);
-      descChip.textContent = '📝 Опис';
+      descChip.innerHTML = `<svg viewBox="0 0 18 18" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2.5h6l3 3v10a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1v-12a1 1 0 0 1 1-1z"/><line x1="6.5" y1="8.5" x2="11.5" y2="8.5"/><line x1="6.5" y1="11.5" x2="10.5" y2="11.5"/></svg><span>Опис</span>`;
       descChip.addEventListener('click', (e) => {
         e.stopPropagation();
         openTaskDescriptionModal(task);
