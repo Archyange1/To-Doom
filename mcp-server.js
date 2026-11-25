@@ -116,6 +116,7 @@ async function dispatchBoardAction(action) {
       id: state.nextTaskId || 1,
       projectId: proj.id,
       title: payload.title,
+      description: typeof payload.description === 'string' ? payload.description.trim() : '',
       epic: payload.epic || '',
       column: col,
       progress: dontDo ? 100 : (typeof payload.progress === 'number' ? payload.progress : (col === 2 ? 100 : 0)),
@@ -140,6 +141,7 @@ async function dispatchBoardAction(action) {
       return { ok: false, error: `Керування ШІ-агентом для проєкту «${proj.name}» вимкнено.` };
     }
     if (typeof payload.title === 'string') task.title = payload.title;
+    if (typeof payload.description === 'string') task.description = payload.description.trim();
     if (typeof payload.epic === 'string') task.epic = payload.epic;
     if (typeof payload.assignee === 'string') task.assignee = payload.assignee;
     const hasExplicitDontDo = typeof payload.dontDo === 'boolean' || typeof payload.dont_do === 'boolean';
@@ -207,6 +209,7 @@ const TOOLS = [
       properties: {
         project_id: { type: 'string', description: 'ID або назва проєкту (необов\'язково)' },
         title: { type: 'string', description: 'Назва задачі' },
+        description: { type: 'string', description: 'Детальний опис задачі (вимоги, контекст, деталі для агента)' },
         epic: { type: 'string', description: 'Епік або категорія задачі' },
         column: { type: 'number', description: 'Колонка: 0 = До виконання, 1 = В роботі, 2 = Виконано' },
         progress: { type: 'number', description: 'Прогрес виконання від 0 до 100' },
@@ -227,6 +230,7 @@ const TOOLS = [
         progress: { type: 'number', description: 'Новий відсоток прогресу (0 - 100)' },
         dont_do: { type: 'boolean', description: 'Позначити як Don\'t Do у Виконано (true) або зняти позначку (false)' },
         title: { type: 'string', description: 'Нова назва задачі (необов\'язково)' },
+        description: { type: 'string', description: 'Новий детальний опис задачі (необов\'язково)' },
         epic: { type: 'string', description: 'Новий епік (необов\'язково)' },
         assignee: { type: 'string', description: 'Виконавець (наприклад, Claude або Codex)' }
       },
@@ -323,7 +327,12 @@ async function handleRequest(msg) {
       const tasks = (state.tasks || []).filter(t => !t.deleted && t.projectId === proj.id);
       const lines = tasks.map(t => {
         const colLabel = t.dontDo ? `${COLUMN_NAMES[t.column] || 'Виконано'} · Don't Do` : (COLUMN_NAMES[t.column] || 'До виконання');
-        return `#${t.id} [${colLabel}] ${t.title} — ${t.progress}% · ${t.assignee}${t.epic ? ` (${t.epic})` : ''}`;
+        const header = `#${t.id} [${colLabel}] ${t.title} — ${t.progress}% · ${t.assignee}${t.epic ? ` (${t.epic})` : ''}`;
+        if (t.description && String(t.description).trim()) {
+          const formattedDesc = String(t.description).trim().replace(/\r?\n/g, '\n    ');
+          return `${header}\n    Опис: ${formattedDesc}`;
+        }
+        return header;
       });
       return {
         jsonrpc: '2.0',
@@ -367,6 +376,7 @@ async function handleRequest(msg) {
         payload: {
           projectId: proj.id,
           title: args.title,
+          description: args.description,
           epic: args.epic || '',
           column: args.column ?? 0,
           progress: args.progress ?? (args.column === 2 ? 100 : 0),
@@ -405,6 +415,7 @@ async function handleRequest(msg) {
           progress: args.progress,
           dont_do: args.dont_do,
           title: args.title,
+          description: args.description,
           epic: args.epic,
           assignee: args.assignee,
           actor: args.assignee || 'MCP Agent'

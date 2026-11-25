@@ -1,5 +1,5 @@
 (() => {
-  const CLIENT_VERSION = '1.3.0';
+  const CLIENT_VERSION = '1.3.1';
   const isElectron = Boolean(window.electronAPI && window.electronAPI.isElectron);
   const isAndroidApk = location.protocol === 'file:' || Boolean(window.AndroidBridge);
   const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent) ||
@@ -393,6 +393,7 @@
         createdOffline: !isConnected,
         projectId: payload.projectId || boardState.activeProjectId,
         title: payload.title,
+        description: typeof payload.description === 'string' ? payload.description.trim() : '',
         epic: payload.epic || '',
         column: col,
         progress: dontDo ? 100 : (payload.progress ?? (col === 2 ? 100 : 0)),
@@ -410,6 +411,7 @@
       const t = boardState.tasks.find(x => x.id === id);
       if (t) {
         if (typeof payload.title === 'string') t.title = payload.title;
+        if (typeof payload.description === 'string') t.description = payload.description.trim();
         if (typeof payload.epic === 'string') t.epic = payload.epic;
         if (typeof payload.assignee === 'string') t.assignee = payload.assignee;
         const hasExplicitDontDo = typeof payload.dontDo === 'boolean' || typeof payload.dont_do === 'boolean';
@@ -1163,6 +1165,18 @@
     });
     actions.appendChild(dontDoBtn);
 
+    const descBtn = document.createElement('button');
+    descBtn.type = 'button';
+    const hasDesc = Boolean(task.description && String(task.description).trim());
+    descBtn.className = 'card-action-btn desc-btn' + (hasDesc ? ' has-desc' : '');
+    descBtn.title = hasDesc ? 'Переглянути / змінити опис задачі' : 'Додати детальний опис задачі';
+    descBtn.textContent = '📝';
+    descBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openTaskDescriptionModal(task);
+    });
+    actions.appendChild(descBtn);
+
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
     editBtn.className = 'card-action-btn';
@@ -1229,6 +1243,19 @@
       epicChip.className = 'task-epic-chip';
       epicChip.textContent = task.epic;
       metaLeft.appendChild(epicChip);
+    }
+
+    if (hasDesc) {
+      const descChip = document.createElement('button');
+      descChip.type = 'button';
+      descChip.className = 'task-desc-chip';
+      descChip.title = String(task.description).trim().slice(0, 180);
+      descChip.textContent = '📝 Опис';
+      descChip.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openTaskDescriptionModal(task);
+      });
+      metaLeft.appendChild(descChip);
     }
 
     const dot = document.createElement('span');
@@ -2020,15 +2047,56 @@
     }
   });
 
-  // Task Edit Modal
+  // Task Edit Modal & Dedicated Description Modal
   const editTaskId = document.getElementById('edit-task-id');
   const editTaskTitle = document.getElementById('edit-task-title');
+  const editTaskDescription = document.getElementById('edit-task-description');
   const editTaskEpic = document.getElementById('edit-task-epic');
   const editTaskAssignee = document.getElementById('edit-task-assignee');
   const editTaskColumn = document.getElementById('edit-task-column');
   const editTaskProgress = document.getElementById('edit-task-progress');
   const editTaskProgressVal = document.getElementById('edit-task-progress-val');
   const chkEditTaskDontDo = document.getElementById('chk-edit-task-dont-do');
+
+  const descTaskId = document.getElementById('desc-task-id');
+  const descModalHeading = document.getElementById('desc-modal-heading');
+  const descTaskTitlePreview = document.getElementById('desc-task-title-preview');
+  const descTaskTextarea = document.getElementById('desc-task-textarea');
+  const formTaskDescription = document.getElementById('form-task-description');
+
+  function openTaskDescriptionModal(task) {
+    if (!task || !descTaskId || !descTaskTextarea) return;
+    if (descModalHeading) descModalHeading.textContent = `Опис задачі #${task.id}`;
+    if (descTaskTitlePreview) descTaskTitlePreview.textContent = task.title;
+    descTaskId.value = String(task.id);
+    descTaskTextarea.value = task.description || '';
+    openModal('modal-task-description');
+    setTimeout(() => {
+      descTaskTextarea.focus();
+      descTaskTextarea.setSelectionRange(descTaskTextarea.value.length, descTaskTextarea.value.length);
+    }, 50);
+  }
+
+  if (descTaskTextarea && formTaskDescription) {
+    descTaskTextarea.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        formTaskDescription.requestSubmit();
+      }
+    });
+    formTaskDescription.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const id = Number(descTaskId.value);
+      const description = descTaskTextarea.value.trim();
+      sendAction('UPDATE_TASK', {
+        id,
+        description,
+        actor: currentUserName
+      });
+      closeModal('modal-task-description');
+      showToast(description ? `Опис задачі #${id} збережено` : `Опис задачі #${id} очищено`);
+    });
+  }
 
   editTaskProgress.addEventListener('input', () => {
     editTaskProgressVal.textContent = `${editTaskProgress.value}%`;
@@ -2054,6 +2122,7 @@
     document.getElementById('modal-task-heading').textContent = `Редагувати задачу #${task.id}`;
     editTaskId.value = String(task.id);
     editTaskTitle.value = task.title;
+    if (editTaskDescription) editTaskDescription.value = task.description || '';
     editTaskEpic.value = task.epic || '';
     editTaskAssignee.value = task.assignee || 'Ви';
     editTaskColumn.value = String(task.column);
@@ -2072,6 +2141,7 @@
     sendAction('UPDATE_TASK', {
       id,
       title: editTaskTitle.value.trim(),
+      description: editTaskDescription ? editTaskDescription.value.trim() : undefined,
       epic: editTaskEpic.value.trim(),
       assignee: editTaskAssignee.value.trim() || 'Ви',
       column: col,

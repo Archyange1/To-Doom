@@ -8,14 +8,14 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="To Doom" />
   <meta name="theme-color" content="#0d0f12" />
-  <link rel="manifest" href="manifest.json?v=1.3.0" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=1.3.0" />
+  <link rel="manifest" href="manifest.json?v=1.3.1" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=1.3.1" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
-  <link rel="apple-touch-icon" href="apple-touch-icon.png?v=1.3.0" />
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=1.3.0" />
-  <link rel="apple-touch-icon-precomposed" sizes="180x180" href="apple-touch-icon.png?v=1.3.0" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png?v=1.3.1" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=1.3.1" />
+  <link rel="apple-touch-icon-precomposed" sizes="180x180" href="apple-touch-icon.png?v=1.3.1" />
   <title>To Doom</title>
-  <link rel="stylesheet" href="styles.css?v=1.3.0" />
+  <link rel="stylesheet" href="styles.css?v=1.3.1" />
 </head>
 <body>
   <!-- Вузький зелений язичок біля краю екрана (коли вікно сховане на Windows) -->
@@ -37,7 +37,7 @@
           </svg>
         </div>
         <span class="app-title">To Doom</span>
-        <span id="app-version-badge" class="app-version">v1.3.0</span>
+        <span id="app-version-badge" class="app-version">v1.3.1</span>
         <div class="app-mode-switcher" id="app-mode-switcher">
           <button type="button" id="btn-mode-planner" class="mode-tab-btn active" title="Планувальник задач (Канбан)">
             <span>Задачі</span>
@@ -476,6 +476,9 @@
         <label class="field-label">Назва задачі:</label>
         <input id="edit-task-title" type="text" class="modal-input" required maxlength="160" />
 
+        <label class="field-label" style="margin-top: 10px;">Опис задачі (бачить ШІ-агент):</label>
+        <textarea id="edit-task-description" class="modal-textarea" rows="3" placeholder="Додайте деталі, вимоги, посилання або контекст для себе та ШІ-агента..."></textarea>
+
         <div class="two-cols" style="margin-top: 10px;">
           <div>
             <label class="field-label">Епік / Категорія:</label>
@@ -515,6 +518,27 @@
     </div>
   </div>
 
+  <!-- Модальне вікно: Детальний опис задачі (для користувача та ШІ-агента) -->
+  <div id="modal-task-description" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="desc-modal-heading">Опис задачі</h3>
+        <button class="icon-btn modal-close" data-close="modal-task-description">✕</button>
+      </div>
+      <form id="form-task-description" class="modal-body">
+        <input type="hidden" id="desc-task-id" />
+        <div id="desc-task-title-preview" class="desc-task-title-preview"></div>
+        <label class="field-label" style="margin-top: 10px;">Детальний опис (вимоги, кроки, деталі):</label>
+        <textarea id="desc-task-textarea" class="modal-textarea desc-textarea-lg" rows="8" placeholder="Опишіть задачу детальніше: що саме треба зробити, які обмеження, посилання чи очікуваний результат..."></textarea>
+        <p class="hint-text">🤖 ШІ-агент автоматично бачить цей опис через MCP (`list_tasks`). Швидке збереження: <code>Ctrl + Enter</code>.</p>
+        <div class="modal-footer-actions" style="margin-top: 14px;">
+          <button type="button" class="btn-secondary modal-close" data-close="modal-task-description">Закрити</button>
+          <button type="submit" class="btn-add">Зберегти опис</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Модальне вікно: Перегляд скріншота на весь екран -->
   <div id="modal-tg-lightbox" class="modal-backdrop hidden">
     <div class="tg-lightbox-card">
@@ -523,6 +547,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=1.3.0"></script>
+  <script src="app.js?v=1.3.1"></script>
 </body>
 </html>

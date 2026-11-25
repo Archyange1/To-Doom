@@ -8,7 +8,7 @@ const zlib = require('zlib');
 const { WebSocketServer, WebSocket } = require('ws');
 const QRCode = require('qrcode');
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.3.1';
 const SEED_TIMESTAMP = 1700000000000;
 
 // Share data directory between D:\To Doom and project folder if available
@@ -416,6 +416,7 @@ function mergeOfflineState(incoming) {
         changed = true;
       } else if ((incTask.updatedAt || 0) > (existing.updatedAt || 0)) {
         existing.title = incTask.title;
+        if (typeof incTask.description === 'string') existing.description = incTask.description;
         existing.epic = incTask.epic ?? existing.epic;
         existing.column = typeof incTask.column === 'number' ? incTask.column : existing.column;
         existing.progress = typeof incTask.progress === 'number' ? incTask.progress : existing.progress;
@@ -611,12 +612,14 @@ function applyAction(action, meta = {}) {
           : (column === 2 ? 100 : 0));
       const assignee = (payload.assignee || 'Ви').trim();
       const epic = (payload.epic || '').trim();
+      const description = typeof payload.description === 'string' ? payload.description.trim() : '';
       const colTasks = state.tasks.filter(t => t.projectId === projectId && !t.deleted && t.column === column);
       const task = {
         id: state.nextTaskId++,
         clientUid: payload.clientUid || ('uid-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6)),
         projectId,
         title,
+        description,
         epic,
         column,
         progress,
@@ -655,6 +658,9 @@ function applyAction(action, meta = {}) {
 
       if (typeof payload.title === 'string' && payload.title.trim()) {
         task.title = payload.title.trim();
+      }
+      if (typeof payload.description === 'string') {
+        task.description = payload.description.trim();
       }
       if (typeof payload.epic === 'string') {
         task.epic = payload.epic.trim();
